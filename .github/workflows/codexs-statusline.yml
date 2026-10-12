@@ -44,8 +44,11 @@ jobs:
         run: |
           $scope = if ($env:GITHUB_EVENT_NAME -eq 'push') { 'feature' } else { $env:REQUESTED_SCOPE }
           if ($scope -cnotin @('feature', 'full', 'baseline', 'build')) { throw "Unsupported scope: $scope" }
+          $logDir = Join-Path $env:RUNNER_TEMP "codexs-statusline-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Path $logDir -ErrorAction Stop | Out-Null
           "scope=$scope" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           "CODEXS_SCOPE=$scope" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          "CODEXS_LOG_DIR=$logDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Checkout selected source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -71,32 +74,37 @@ jobs:
         working-directory: codex-rs
         run: |
           $ErrorActionPreference = 'Stop'
-          $sha = (& git rev-parse HEAD).Trim()
-          $gitExit = $LASTEXITCODE
-          if ($gitExit -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot verify source SHA' }
-          if ($env:CODEXS_SCOPE -eq 'baseline' -and $sha -cne '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e') { throw "Wrong baseline source: $sha" }
-          $workspaceVersion = Select-String -LiteralPath Cargo.toml -Pattern '^version = "0\.162\.1"$' | Select-Object -First 1
-          if (-not $workspaceVersion) { throw 'Unexpected Codex workspace version' }
-          $toolchain = Get-Content -LiteralPath rust-toolchain.toml -Raw
-          if ($toolchain -notmatch '(?m)^channel = "1\.95\.0"$') { throw 'Unexpected source Rust pin' }
-          $rustVersion = & rustup run 1.95.0 rustc --version
-          $rustExit = $LASTEXITCODE
-          if ($rustExit -ne 0 -or $rustVersion -notmatch '^rustc 1\.95\.0 ') { throw "Wrong Rust toolchain: $rustVersion (exit $rustExit)" }
-          $drives = @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | Sort-Object AvailableFreeSpace -Descending)
-          if ($drives.Count -eq 0) { throw 'No readable fixed target drive' }
-          $best = $drives[0]
-          $target = Join-Path $best.RootDirectory.FullName "codexs-target-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          $target = [System.IO.Path]::GetFullPath($target)
-          if ([System.IO.Path]::GetPathRoot($target) -cne $best.RootDirectory.FullName -or (Test-Path -LiteralPath $target)) { throw 'Target directory is not unique or on selected drive' }
-          New-Item -ItemType Directory -Path $target -ErrorAction Stop | Out-Null
-          $logDir = Join-Path $env:RUNNER_TEMP "codexs-statusline-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          New-Item -ItemType Directory -Path $logDir -ErrorAction Stop | Out-Null
-          "CARGO_TARGET_DIR=$target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CODEXS_LOG_DIR=$logDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CODEXS_SOURCE_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          $logDir = [System.IO.Path]::GetFullPath($env:CODEXS_LOG_DIR)
           $setupLog = Join-Path $logDir 'setup.log'
-          "source=$sha scope=$env:CODEXS_SCOPE rust=$rustVersion target=$target" | Out-File -LiteralPath $setupLog -Encoding utf8
-          foreach ($drive in $drives) { "drive=$($drive.Name) available_bytes=$($drive.AvailableFreeSpace)" | Out-File -LiteralPath $setupLog -Encoding utf8 -Append }
+          "preflight_started scope=$env:CODEXS_SCOPE" | Out-File -LiteralPath $setupLog -Encoding utf8
+          try {
+            $sha = (& git rev-parse HEAD).Trim()
+            $gitExit = $LASTEXITCODE
+            if ($gitExit -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot verify source SHA' }
+            if ($env:CODEXS_SCOPE -eq 'baseline' -and $sha -cne '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e') { throw "Wrong baseline source: $sha" }
+            $workspaceVersion = Select-String -LiteralPath Cargo.toml -Pattern '^version = "0\.162\.1"$' | Select-Object -First 1
+            if (-not $workspaceVersion) { throw 'Unexpected Codex workspace version' }
+            $toolchain = Get-Content -LiteralPath rust-toolchain.toml -Raw
+            $pinLines = @($toolchain -split '\r?\n' | Where-Object { $_ -cmatch '^\s*channel\s*=' })
+            if ($pinLines.Count -ne 1 -or $pinLines[0] -cnotmatch '^\s*channel\s*=\s*"1\.95\.0"\s*$') { throw 'Unexpected source Rust pin' }
+            $rustVersion = & rustup run 1.95.0 rustc --version
+            $rustExit = $LASTEXITCODE
+            if ($rustExit -ne 0 -or $rustVersion -notmatch '^rustc 1\.95\.0 ') { throw "Wrong Rust toolchain: $rustVersion (exit $rustExit)" }
+            $drives = @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | Sort-Object AvailableFreeSpace -Descending)
+            if ($drives.Count -eq 0) { throw 'No readable fixed target drive' }
+            $best = $drives[0]
+            $target = Join-Path $best.RootDirectory.FullName "codexs-target-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+            $target = [System.IO.Path]::GetFullPath($target)
+            if ([System.IO.Path]::GetPathRoot($target) -cne $best.RootDirectory.FullName -or (Test-Path -LiteralPath $target)) { throw 'Target directory is not unique or on selected drive' }
+            New-Item -ItemType Directory -Path $target -ErrorAction Stop | Out-Null
+            "CARGO_TARGET_DIR=$target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "CODEXS_SOURCE_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+            "source=$sha scope=$env:CODEXS_SCOPE rust=$rustVersion target=$target" | Out-File -LiteralPath $setupLog -Encoding utf8 -Append
+            foreach ($drive in $drives) { "drive=$($drive.Name) available_bytes=$($drive.AvailableFreeSpace)" | Out-File -LiteralPath $setupLog -Encoding utf8 -Append }
+          } catch {
+            "PREFLIGHT_FAILED $($_.Exception.Message)" | Out-File -LiteralPath $setupLog -Encoding utf8 -Append
+            throw
+          }
 
       - name: Run guarded native Cargo operation
         working-directory: codex-rs
@@ -547,7 +555,7 @@ jobs:
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: codexs-statusline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.CODEXS_LOG_DIR }}
+          path: ${{ runner.temp }}\codexs-statusline-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: warn
           retention-days: 14
 
