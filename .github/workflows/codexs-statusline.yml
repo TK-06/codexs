@@ -1,0 +1,561 @@
+name: codexs status line (Windows)
+
+on:
+  push:
+    branches: [statusline-command]
+    paths:
+      - .github/workflows/codexs-statusline.yml
+      - codex-rs/**
+      - codexs/**
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: 'feature, full, baseline, or build (manual dispatch needs this workflow on the default branch)'
+        required: true
+        type: choice
+        default: feature
+        options: [feature, full, baseline, build]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codexs-statusline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: powershell
+    env:
+      CARGO_BUILD_JOBS: '1'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+      CARGO_PROFILE_RELEASE_LTO: 'off'
+      INSTA_UPDATE: 'no'
+      CARGO_TERM_COLOR: 'never'
+    steps:
+      - name: Select validated scope
+        id: scope
+        env:
+          REQUESTED_SCOPE: ${{ github.event.inputs.scope }}
+        run: |
+          $scope = if ($env:GITHUB_EVENT_NAME -eq 'push') { 'feature' } else { $env:REQUESTED_SCOPE }
+          if ($scope -cnotin @('feature', 'full', 'baseline', 'build')) { throw "Unsupported scope: $scope" }
+          "scope=$scope" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "CODEXS_SCOPE=$scope" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      - name: Checkout selected source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ steps.scope.outputs.scope == 'baseline' && '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e' || github.sha }}
+
+      - name: Install pinned Rust
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          toolchain: 1.95.0
+
+      - name: Restore Cargo downloads only
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: codexs-windows-cargo-1.95.0-${{ hashFiles('codex-rs/Cargo.lock') }}
+
+      - name: Verify source and select target drive
+        working-directory: codex-rs
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sha = (& git rev-parse HEAD).Trim()
+          $gitExit = $LASTEXITCODE
+          if ($gitExit -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot verify source SHA' }
+          if ($env:CODEXS_SCOPE -eq 'baseline' -and $sha -cne '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e') { throw "Wrong baseline source: $sha" }
+          $workspaceVersion = Select-String -LiteralPath Cargo.toml -Pattern '^version = "0\.162\.1"$' | Select-Object -First 1
+          if (-not $workspaceVersion) { throw 'Unexpected Codex workspace version' }
+          $toolchain = Get-Content -LiteralPath rust-toolchain.toml -Raw
+          if ($toolchain -notmatch '(?m)^channel = "1\.95\.0"$') { throw 'Unexpected source Rust pin' }
+          $rustVersion = & rustup run 1.95.0 rustc --version
+          $rustExit = $LASTEXITCODE
+          if ($rustExit -ne 0 -or $rustVersion -notmatch '^rustc 1\.95\.0 ') { throw "Wrong Rust toolchain: $rustVersion (exit $rustExit)" }
+          $drives = @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | Sort-Object AvailableFreeSpace -Descending)
+          if ($drives.Count -eq 0) { throw 'No readable fixed target drive' }
+          $best = $drives[0]
+          $target = Join-Path $best.RootDirectory.FullName "codexs-target-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $target = [System.IO.Path]::GetFullPath($target)
+          if ([System.IO.Path]::GetPathRoot($target) -cne $best.RootDirectory.FullName -or (Test-Path -LiteralPath $target)) { throw 'Target directory is not unique or on selected drive' }
+          New-Item -ItemType Directory -Path $target -ErrorAction Stop | Out-Null
+          $logDir = Join-Path $env:RUNNER_TEMP "codexs-statusline-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Path $logDir -ErrorAction Stop | Out-Null
+          "CARGO_TARGET_DIR=$target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CODEXS_LOG_DIR=$logDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CODEXS_SOURCE_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          $setupLog = Join-Path $logDir 'setup.log'
+          "source=$sha scope=$env:CODEXS_SCOPE rust=$rustVersion target=$target" | Out-File -LiteralPath $setupLog -Encoding utf8
+          foreach ($drive in $drives) { "drive=$($drive.Name) available_bytes=$($drive.AvailableFreeSpace)" | Out-File -LiteralPath $setupLog -Encoding utf8 -Append }
+
+      - name: Run guarded native Cargo operation
+        working-directory: codex-rs
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:CODEXS_SCOPE -cnotin @('feature', 'full', 'baseline', 'build')) { throw 'Invalid scope from selection step' }
+          $logDir = [System.IO.Path]::GetFullPath($env:CODEXS_LOG_DIR)
+          $guardPath = Join-Path $logDir 'resource-guard.ps1'
+          $runnerPath = Join-Path $logDir 'cargo-runner.ps1'
+          $statePath = Join-Path $logDir 'guard-state.json'
+          $guardLog = Join-Path $logDir 'guard.log'
+          $readyPath = Join-Path $logDir 'guard.ready'
+          $requestPath = Join-Path $logDir 'start.request'
+          $startedPath = Join-Path $logDir 'runner.started'
+          $donePath = Join-Path $logDir 'guard.done'
+          $stopPath = Join-Path $logDir 'guard.stop'
+          $outPath = Join-Path $logDir 'cargo.log'
+          $exitPath = Join-Path $logDir 'native-exit.txt'
+          $resultPath = Join-Path $logDir 'outcome.txt'
+          $runnerSource = @'
+          $ErrorActionPreference = 'Stop'
+          $state = Get-Content -LiteralPath $env:CODEXS_GUARD_STATE -Raw | ConvertFrom-Json
+          try {
+            Set-Location -LiteralPath $state.workdir
+            [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+            $OutputEncoding = [Console]::OutputEncoding
+            $rustup = (Get-Command rustup.exe -ErrorAction Stop).Source
+            $cargoArgs = @('run', '1.95.0', 'cargo')
+            if ($state.scope -eq 'build') {
+              $cargoArgs += @('build', '--release', '--locked', '-p', 'codex-cli', '--bin', 'codex')
+            } else {
+              $cargoArgs += @('test', '--release', '--locked', '-p', 'codex-tui', '--config', 'profile.release.package.codex-tui.opt-level=1')
+              if ($state.scope -eq 'feature') { $cargoArgs += 'status_line_command' }
+              else { $cargoArgs += '--no-fail-fast' }
+            }
+            "scope=$($state.scope) source=$($state.source_sha) rust=1.95.0 jobs=1 release=true locked=true lto=off debug=0 tui_opt=1 native_command=$rustup $($cargoArgs -join ' ')" | Out-File -LiteralPath $state.cargo_log -Encoding utf8
+            $ErrorActionPreference = 'Continue'
+            & $rustup @cargoArgs 2>&1 | ForEach-Object { $line = "$_"; Write-Host $line; $line | Out-File -LiteralPath $state.cargo_log -Encoding utf8 -Append }
+            $nativeExit = $LASTEXITCODE
+            $ErrorActionPreference = 'Stop'
+            if ($null -eq $nativeExit) { throw 'Native Cargo exit code was unavailable' }
+            $nativeExit | Out-File -LiteralPath $state.native_exit -Encoding ascii
+            exit $nativeExit
+          } catch {
+            "RUNNER_SETUP_FAILURE $($_.Exception.Message)" | Out-File -LiteralPath $state.runner_error -Encoding utf8
+            exit 251
+          }
+          '@
+          $guardSource = @'
+          param([Parameter(Mandatory=$true)][string]$StatePath)
+          $ErrorActionPreference = 'Stop'
+          $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
+          $ownerPid = [int]$state.owner_pid
+          $ownerTicks = [long]$state.owner_ticks
+          $log = [string]$state.guard_log
+          $job = $null
+          $seen = @{}
+          $problem = $null
+          $cleanupProblem = $null
+          function Note([string]$message) {
+            ('{0:o} {1}' -f [datetime]::UtcNow, $message) | Out-File -LiteralPath $log -Append -Encoding utf8
+          }
+          function ExactLive([int]$id, [long]$ticks) {
+            try {
+              $p = Get-Process -Id $id -ErrorAction SilentlyContinue
+              if (-not $p) { return $false }
+              $start = $p.StartTime
+              return ($null -ne $start -and $start.ToUniversalTime().Ticks -eq $ticks)
+            } catch { return $false }
+          }
+          function CheckOwner {
+            if (-not (ExactLive $ownerPid $ownerTicks)) { throw 'Owner exited before operation completion' }
+          }
+          function CheckResources {
+            $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+            if ($null -eq $os.FreeVirtualMemory -or [long]$os.FreeVirtualMemory -le 0) { throw 'Virtual-memory reading unavailable' }
+            $freeVirtual = [long]$os.FreeVirtualMemory * 1024
+            $space = @()
+            foreach ($root in @($state.drives)) {
+              $drive = [System.IO.DriveInfo]::new([string]$root)
+              if (-not $drive.IsReady -or $drive.AvailableFreeSpace -le 0) { throw "Disk reading unavailable: $root" }
+              $free = [long]$drive.AvailableFreeSpace
+              $space += "$root=$free"
+              if ($free -lt 8GB) { throw "Disk below 8 GiB: $root=$free" }
+            }
+            Note "sample free_virtual_bytes=$freeVirtual disk_bytes=$($space -join ',') job_members=$($seen.Count)"
+            if ($freeVirtual -lt 3GB) { throw "Virtual memory below 3 GiB: $freeVirtual" }
+            if ($null -ne $script:previousVirtual -and $freeVirtual -lt 4GB -and ($script:previousVirtual - $freeVirtual) -gt 512MB) {
+              throw "Rapid virtual-memory drop: $script:previousVirtual to $freeVirtual"
+            }
+            $script:previousVirtual = $freeVirtual
+          }
+          function TrackMembers {
+            if (-not $job) { return }
+            foreach ($memberPid in @($job.ActiveProcessIds())) {
+              try {
+                $p = Get-Process -Id $memberPid -ErrorAction SilentlyContinue
+                if (-not $p) { continue }
+                $ticks = $p.StartTime.ToUniversalTime().Ticks
+              } catch { continue }
+              if ($seen.ContainsKey([int]$memberPid) -and $seen[[int]$memberPid].ticks -eq $ticks) { continue }
+              $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$memberPid" -ErrorAction SilentlyContinue
+              $parent = if ($cim) { [int]$cim.ParentProcessId } else { -1 }
+              $name = if ($cim) { $cim.Name } else { $p.ProcessName }
+              $seen[[int]$memberPid] = @{ pid=[int]$memberPid; ticks=$ticks }
+              Note "member pid=$memberPid ticks=$ticks parent=$parent name=$name"
+            }
+          }
+          $nativeSource = @"
+          using System;
+          using System.Collections.Generic;
+          using System.ComponentModel;
+          using System.Runtime.InteropServices;
+          using System.Text;
+
+          public sealed class CodexsOwnedJob : IDisposable
+          {
+              const uint CREATE_SUSPENDED = 0x00000004;
+              const uint CREATE_NO_WINDOW = 0x08000000;
+              const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+              const uint WAIT_OBJECT_0 = 0;
+              const uint WAIT_TIMEOUT = 258;
+              IntPtr job;
+              IntPtr process;
+              public int ProcessId { get; private set; }
+
+              [StructLayout(LayoutKind.Sequential)]
+              struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+              {
+                  public long PerProcessUserTimeLimit;
+                  public long PerJobUserTimeLimit;
+                  public uint LimitFlags;
+                  public UIntPtr MinimumWorkingSetSize;
+                  public UIntPtr MaximumWorkingSetSize;
+                  public uint ActiveProcessLimit;
+                  public IntPtr Affinity;
+                  public uint PriorityClass;
+                  public uint SchedulingClass;
+              }
+
+              [StructLayout(LayoutKind.Sequential)]
+              struct IO_COUNTERS
+              {
+                  public ulong ReadOperationCount;
+                  public ulong WriteOperationCount;
+                  public ulong OtherOperationCount;
+                  public ulong ReadTransferCount;
+                  public ulong WriteTransferCount;
+                  public ulong OtherTransferCount;
+              }
+
+              [StructLayout(LayoutKind.Sequential)]
+              struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+              {
+                  public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+                  public IO_COUNTERS IoInfo;
+                  public UIntPtr ProcessMemoryLimit;
+                  public UIntPtr JobMemoryLimit;
+                  public UIntPtr PeakProcessMemoryUsed;
+                  public UIntPtr PeakJobMemoryUsed;
+              }
+
+              [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+              struct STARTUPINFO
+              {
+                  public uint cb;
+                  public string lpReserved;
+                  public string lpDesktop;
+                  public string lpTitle;
+                  public uint dwX;
+                  public uint dwY;
+                  public uint dwXSize;
+                  public uint dwYSize;
+                  public uint dwXCountChars;
+                  public uint dwYCountChars;
+                  public uint dwFillAttribute;
+                  public uint dwFlags;
+                  public ushort wShowWindow;
+                  public ushort cbReserved2;
+                  public IntPtr lpReserved2;
+                  public IntPtr hStdInput;
+                  public IntPtr hStdOutput;
+                  public IntPtr hStdError;
+              }
+
+              [StructLayout(LayoutKind.Sequential)]
+              struct PROCESS_INFORMATION
+              {
+                  public IntPtr hProcess;
+                  public IntPtr hThread;
+                  public uint dwProcessId;
+                  public uint dwThreadId;
+              }
+
+              [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+              static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+              [DllImport("kernel32.dll", SetLastError = true)]
+              static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, int length);
+              [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateProcessW")]
+              static extern bool CreateProcess(string application, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes,
+                  bool inheritHandles, uint flags, IntPtr environment, string currentDirectory, ref STARTUPINFO startup, out PROCESS_INFORMATION information);
+              [DllImport("kernel32.dll", SetLastError = true)]
+              static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+              [DllImport("kernel32.dll", SetLastError = true)]
+              static extern uint ResumeThread(IntPtr thread);
+              [DllImport("kernel32.dll", SetLastError = true)]
+              static extern bool TerminateProcess(IntPtr process, uint exitCode);
+              [DllImport("kernel32.dll", SetLastError = true)]
+              static extern bool CloseHandle(IntPtr handle);
+              [DllImport("kernel32.dll", SetLastError = true)]
+              static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+              [DllImport("kernel32.dll", SetLastError = true)]
+              static extern bool QueryInformationJobObject(IntPtr job, int infoClass, IntPtr buffer, int length, out int returned);
+
+              static Exception Win32(string operation)
+              {
+                  return new Win32Exception(Marshal.GetLastWin32Error(), operation);
+              }
+
+              public static CodexsOwnedJob Start(string application, string commandLine, string directory)
+              {
+                  var owned = new CodexsOwnedJob();
+                  PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
+                  bool assigned = false;
+                  try
+                  {
+                      owned.job = CreateJobObject(IntPtr.Zero, null);
+                      if (owned.job == IntPtr.Zero) throw Win32("CreateJobObject");
+                      var limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+                      limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                      if (!SetInformationJobObject(owned.job, 9, ref limits, Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))))
+                          throw Win32("SetInformationJobObject(KILL_ON_JOB_CLOSE)");
+                      var startup = new STARTUPINFO();
+                      startup.cb = (uint)Marshal.SizeOf(typeof(STARTUPINFO));
+                      if (!CreateProcess(application, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, false,
+                          CREATE_SUSPENDED | CREATE_NO_WINDOW, IntPtr.Zero, directory, ref startup, out pi))
+                          throw Win32("CreateProcess suspended");
+                      owned.process = pi.hProcess;
+                      owned.ProcessId = checked((int)pi.dwProcessId);
+                      if (!AssignProcessToJobObject(owned.job, pi.hProcess)) throw Win32("AssignProcessToJobObject");
+                      assigned = true;
+                      if (ResumeThread(pi.hThread) == uint.MaxValue) throw Win32("ResumeThread");
+                      return owned;
+                  }
+                  catch
+                  {
+                      if (pi.hProcess != IntPtr.Zero && !assigned) TerminateProcess(pi.hProcess, 1);
+                      owned.Dispose();
+                      throw;
+                  }
+                  finally
+                  {
+                      if (pi.hThread != IntPtr.Zero) CloseHandle(pi.hThread);
+                  }
+              }
+
+              public bool Wait(int milliseconds)
+              {
+                  uint result = WaitForSingleObject(process, checked((uint)milliseconds));
+                  if (result == WAIT_OBJECT_0) return true;
+                  if (result == WAIT_TIMEOUT) return false;
+                  throw Win32("WaitForSingleObject");
+              }
+
+              public int[] ActiveProcessIds()
+              {
+                  int capacity = 128;
+                  while (capacity <= 4096)
+                  {
+                      int length = 8 + capacity * IntPtr.Size;
+                      IntPtr buffer = Marshal.AllocHGlobal(length);
+                      try
+                      {
+                          int returned;
+                          if (QueryInformationJobObject(job, 3, buffer, length, out returned))
+                          {
+                              int count = Marshal.ReadInt32(buffer, 4);
+                              var ids = new List<int>();
+                              for (int i = 0; i < count; i++) ids.Add(Marshal.ReadIntPtr(buffer, 8 + i * IntPtr.Size).ToInt32());
+                              return ids.ToArray();
+                          }
+                          if (Marshal.GetLastWin32Error() != 234) throw Win32("QueryInformationJobObject");
+                      }
+                      finally { Marshal.FreeHGlobal(buffer); }
+                      capacity *= 2;
+                  }
+                  throw new InvalidOperationException("Job member list exceeds 4096 processes");
+              }
+
+              public void Dispose()
+              {
+                  if (job != IntPtr.Zero) { CloseHandle(job); job = IntPtr.Zero; }
+                  if (process != IntPtr.Zero) { CloseHandle(process); process = IntPtr.Zero; }
+              }
+          }
+          "@
+          try {
+            Add-Type -TypeDefinition $nativeSource -ErrorAction Stop
+            CheckOwner
+            CheckResources
+            'ready' | Out-File -LiteralPath $state.ready_path -Encoding ascii
+            Note "ready owner=$ownerPid ticks=$ownerTicks job=killonclose"
+            $startSeen = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              CheckOwner
+              CheckResources
+              if (Test-Path -LiteralPath $state.request_path) { $startSeen = $true; break }
+              Start-Sleep -Milliseconds 1000
+            }
+            if (-not $startSeen) { throw 'No start request within 30 seconds' }
+            CheckOwner
+            CheckResources
+            $app = (Get-Command powershell.exe -ErrorAction Stop).Source
+            $command = '"' + $app + '" -NoProfile -NonInteractive -File "' + $state.runner_path + '"'
+            # CreateProcess is suspended; association with a kill-on-close Job precedes ResumeThread.
+            $job = [CodexsOwnedJob]::Start($app, $command, [string]$state.workdir)
+            $runner = Get-Process -Id $job.ProcessId -ErrorAction Stop
+            $runnerTicks = $runner.StartTime.ToUniversalTime().Ticks
+            Note "started pid=$($job.ProcessId) ticks=$runnerTicks contained=true"
+            "$($job.ProcessId),$runnerTicks" | Out-File -LiteralPath $state.started_path -Encoding ascii
+            while ($true) {
+              CheckOwner
+              TrackMembers
+              CheckResources
+              if ($job.Wait(1000)) { Note 'runner_exited'; break }
+            }
+          } catch {
+            $problem = $_.Exception.Message
+            Note "GUARD_STOP $problem"
+          } finally {
+            if ($job) {
+              try { TrackMembers } catch { $cleanupProblem = "member enumeration failed: $($_.Exception.Message)" }
+              $job.Dispose() # The OS terminates the entire transitive process tree, including reparented descendants.
+              Note "job_closed tracked_count=$($seen.Count)"
+              for ($attempt = 0; $attempt -lt 15; $attempt++) {
+                $remaining = @($seen.Values | Where-Object { ExactLive $_.pid $_.ticks })
+                if ($remaining.Count -eq 0) { break }
+                Start-Sleep -Milliseconds 1000
+              }
+              if ($remaining.Count -gt 0) { $cleanupProblem += " remaining_pids=$(@($remaining | ForEach-Object { $_.pid }) -join ',')" }
+            }
+            if ($cleanupProblem) { Note "CLEANUP_FAILED $cleanupProblem" }
+            if ($problem -or $cleanupProblem) {
+              "guard=$problem cleanup=$cleanupProblem" | Out-File -LiteralPath $state.stop_path -Encoding utf8
+              exit 1
+            }
+            Note 'DONE cleanup_complete'
+            'done' | Out-File -LiteralPath $state.done_path -Encoding ascii
+            exit 0
+          }
+          '@
+          [System.IO.File]::WriteAllText($runnerPath, $runnerSource, [System.Text.UTF8Encoding]::new($false))
+          [System.IO.File]::WriteAllText($guardPath, $guardSource, [System.Text.UTF8Encoding]::new($false))
+          $ownerTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+          $workspaceRoot = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($env:GITHUB_WORKSPACE))
+          $logRoot = [System.IO.Path]::GetPathRoot($logDir)
+          $targetRoot = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($env:CARGO_TARGET_DIR))
+          $roots = @(@($workspaceRoot, $logRoot, $targetRoot) | Select-Object -Unique)
+          $state = @{
+            owner_pid=$PID; owner_ticks=$ownerTicks; drives=$roots; workdir=(Get-Location).Path
+            guard_log=$guardLog; ready_path=$readyPath; request_path=$requestPath; started_path=$startedPath
+            done_path=$donePath; stop_path=$stopPath; runner_path=$runnerPath; cargo_log=$outPath
+            native_exit=$exitPath; runner_error=(Join-Path $logDir 'runner-error.txt')
+            scope=$env:CODEXS_SCOPE; source_sha=$env:CODEXS_SOURCE_SHA
+          }
+          $state | ConvertTo-Json -Compress | Out-File -LiteralPath $statePath -Encoding utf8
+          $env:CODEXS_GUARD_STATE = $statePath
+          $guard = $null
+          $wrapperProblem = $null
+          function GuardLive {
+            if (-not $guard) { return $false }
+            try {
+              $p = Get-Process -Id $guard.Id -ErrorAction SilentlyContinue
+              if (-not $p) { return $false }
+              $start = $p.StartTime
+              return ($null -ne $start -and $start.ToUniversalTime().Ticks -eq $guard.StartTime.ToUniversalTime().Ticks)
+            } catch { return $false }
+          }
+          try {
+            $guardArgs = '-NoProfile -NonInteractive -File "' + $guardPath + '" -StatePath "' + $statePath + '"'
+            $guard = Start-Process -FilePath powershell.exe -ArgumentList $guardArgs -WindowStyle Hidden -PassThru
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              if (Test-Path -LiteralPath $readyPath) { $ready = $true; break }
+              if (-not (GuardLive)) { break }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $ready -or -not (GuardLive)) { throw 'Guard failed before start handshake' }
+            'start' | Out-File -LiteralPath $requestPath -Encoding ascii
+            $started = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              if (Test-Path -LiteralPath $startedPath) { $started = $true; break }
+              if (-not (GuardLive)) { break }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $started -or -not (GuardLive)) { throw 'Guard failed during contained startup' }
+            while (-not (Test-Path -LiteralPath $donePath) -and -not (Test-Path -LiteralPath $stopPath)) {
+              if (-not (GuardLive)) { throw 'Guard died during native operation; Job Object closed' }
+              Start-Sleep -Milliseconds 1000
+            }
+          } catch {
+            $wrapperProblem = $_.Exception.Message
+          } finally {
+            if ($guard) {
+              try {
+                $guard.WaitForExit(30000) | Out-Null
+                if ($guard.HasExited) {
+                  if ($guard.ExitCode -ne 0) { $wrapperProblem += " guard_exit=$($guard.ExitCode);" }
+                } elseif (GuardLive) {
+                  Stop-Process -Id $guard.Id -Force -ErrorAction Stop # Exact guard PID/creation only; Job closes on death.
+                  $wrapperProblem += ' guard_timeout_and_stopped;'
+                }
+              } catch { $wrapperProblem += " guard_wait_failure=$($_.Exception.Message);" }
+            }
+          }
+          $lines = if (Test-Path -LiteralPath $outPath) { @(Get-Content -LiteralPath $outPath) } else { @() }
+          $resultLines = @($lines | Where-Object { $_ -match '^test result: (ok|FAILED)\.\s+(\d+) passed;\s+(\d+) failed;\s+(\d+) ignored' })
+          $passed = 0; $failed = 0; $ignored = 0
+          foreach ($line in $resultLines) {
+            if ($line -match '^test result: (ok|FAILED)\.\s+(\d+) passed;\s+(\d+) failed;\s+(\d+) ignored') {
+              $passed += [int]$Matches[2]; $failed += [int]$Matches[3]; $ignored += [int]$Matches[4]
+            }
+          }
+          $testCount = $passed + $failed + $ignored
+          $guardReason = if (Test-Path -LiteralPath $stopPath) { (Get-Content -LiteralPath $stopPath -Raw).Trim() } else { 'none' }
+          $nativeExit = if (Test-Path -LiteralPath $exitPath) { [int](Get-Content -LiteralPath $exitPath -Raw).Trim() } else { $null }
+          $outcome = "scope=$env:CODEXS_SCOPE source=$env:CODEXS_SOURCE_SHA native_exit=$nativeExit passed=$passed failed=$failed ignored=$ignored total=$testCount guard_stop=$guardReason wrapper=$wrapperProblem"
+          $outcome | Out-File -LiteralPath $resultPath -Encoding utf8
+          Write-Host $outcome
+          if ($env:GITHUB_STEP_SUMMARY) { $outcome | Out-File -LiteralPath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
+          if ($wrapperProblem -or $guardReason -ne 'none' -or $null -eq $nativeExit) { throw "Hosted validation did not complete normally: $outcome" }
+          if ($nativeExit -ne 0) { throw "Cargo failed: $outcome" }
+          if ($env:CODEXS_SCOPE -eq 'feature' -and $testCount -le 0) { throw "Feature filter ran zero tests: $outcome" }
+
+
+      - name: Save Cargo downloads only
+        if: always() && steps.scope.outputs.scope != ''
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: codexs-windows-cargo-1.95.0-${{ hashFiles('codex-rs/Cargo.lock') }}
+
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexs-statusline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CODEXS_LOG_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload optional codex CLI binary
+        if: success() && steps.scope.outputs.scope == 'build'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexs-cli-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CARGO_TARGET_DIR }}/release/codex.exe
+          if-no-files-found: error
+          retention-days: 7
