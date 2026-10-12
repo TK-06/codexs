@@ -213,6 +213,7 @@ mod startup_preflight;
 mod startup_presentation;
 mod startup_recovery;
 mod status;
+mod status_line_command;
 mod status_indicator_widget;
 mod streaming;
 mod style;

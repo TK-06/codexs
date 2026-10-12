@@ -12,6 +12,7 @@ use crate::legacy_core::config::ConfigTomlLoadResult;
 use crate::legacy_core::config::TerminalResizeReflowConfig;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
 use crate::transcript_mode::TranscriptMode;
+use crate::status_line_command::StatusLineCommandResolution;
 use codex_config::ConfigLayerStack;
 use codex_config::types::CopyOnSelect;
 use codex_config::types::History;
@@ -24,6 +25,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LocalSettings {
     pub(crate) audio: Result<codex_config::config_toml::RealtimeAudioToml, String>,
+    pub(crate) status_line_command: StatusLineCommandResolution,
     pub(crate) tui: Tui,
     pub(crate) transcript_mode: TranscriptMode,
     pub(crate) history: History,
@@ -50,6 +52,7 @@ impl LocalSettings {
     ) -> Self {
         let mut settings = Self {
             audio: Ok(Default::default()),
+            status_line_command: StatusLineCommandResolution::default(),
             transcript_mode: TranscriptMode::resolve(
                 config.tui_fullscreen_transcript,
                 config.tui_alternate_screen != codex_config::types::AltScreenMode::Never,
@@ -125,6 +128,7 @@ impl LocalSettings {
         tui.screen_reader_detection_done = None;
         let mut settings = Self {
             audio: Ok(Default::default()),
+            status_line_command: StatusLineCommandResolution::default(),
             transcript_mode: TranscriptMode::resolve(
                 tui.fullscreen_transcript,
                 tui.alternate_screen != codex_config::types::AltScreenMode::Never,
@@ -173,6 +177,7 @@ impl LocalSettings {
         self.audio = audio
             .try_into()
             .map_err(|error: toml::de::Error| format!("Invalid machine audio settings: {error}"));
+        self.status_line_command = StatusLineCommandResolution::from_layers(layers);
     }
 }
 
