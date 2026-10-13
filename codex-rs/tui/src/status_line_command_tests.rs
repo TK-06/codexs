@@ -4,6 +4,477 @@ use codex_config::ConfigLayerSource;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use serde_json::json;
+
+fn counts(
+    input: i64,
+    cached_input: i64,
+    output: i64,
+    reasoning_output: i64,
+    total: i64,
+) -> StatusLineTokenCounts {
+    StatusLineTokenCounts {
+        input,
+        cached_input,
+        output,
+        reasoning_output,
+        total,
+    }
+}
+
+fn payload_snapshot() -> StatusLinePayloadSnapshot {
+    StatusLinePayloadSnapshot {
+        session_id: "thread-123".to_string(),
+        cwd: "/work/project".to_string(),
+        model_id: "gpt-6".to_string(),
+        model_display_name: "GPT-6".to_string(),
+        effort_level: Some("high".to_string()),
+        version: "1.2.3".to_string(),
+        mode: "Codex".to_string(),
+        approval_mode: "on-request".to_string(),
+        sandbox: "workspace-write".to_string(),
+        thread_name: Some("Migration".to_string()),
+        compactions: 2,
+        context_window_size: Some(200_000),
+        context_used_percentage: Some(25.0),
+        context_remaining_percentage: Some(75.0),
+        total_tokens: Some(counts(50_400, 20_000, 2_090, 900, 52_490)),
+        last_tokens: Some(counts(400, 100, 90, 30, 490)),
+        rate_limits: vec![],
+        session_wall_duration_ms: 12_345,
+    }
+}
+
+fn payload(snapshot: &StatusLinePayloadSnapshot) -> serde_json::Value {
+    build_status_line_payload(snapshot, &StatusLineLaunchState::new(snapshot.total_tokens))
+}
+
+#[test]
+fn payload_has_consumer_metadata_and_schema_one_extras() {
+    let p = payload(&payload_snapshot());
+    assert_eq!(p["hook_event_name"], "Status");
+    assert_eq!(p["session_id"], "thread-123");
+    assert_eq!(p["cwd"], "/work/project");
+    assert_eq!(p["workspace"]["current_dir"], "/work/project");
+    assert_eq!(p["workspace"]["project_dir"], "/work/project");
+    assert_eq!(p["model"], json!({"id": "gpt-6", "display_name": "GPT-6"}));
+    assert_eq!(p["effort"]["level"], "high");
+    assert_eq!(p["version"], "1.2.3");
+    assert_eq!(p["output_style"]["name"], "Codex");
+    assert_eq!(p["cost"]["total_duration_ms"], 12_345);
+    assert_eq!(p["codex"]["schema"], 1);
+    assert_eq!(p["codex"]["approval_mode"], "on-request");
+    assert_eq!(p["codex"]["sandbox"], "workspace-write");
+    assert_eq!(p["codex"]["thread_name"], "Migration");
+    assert_eq!(p["codex"]["compactions"], 2);
+}
+
+#[test]
+fn payload_splits_cached_input_and_keeps_cumulative_thread_totals() {
+    let p = payload(&payload_snapshot());
+    assert_eq!(p["context_window"]["context_window_size"], 200_000);
+    assert_eq!(p["context_window"]["total_input_tokens"], 50_400);
+    assert_eq!(p["context_window"]["total_output_tokens"], 2_090);
+    assert_eq!(p["context_window"]["used_percentage"], 25.0);
+    assert_eq!(p["context_window"]["remaining_percentage"], 75.0);
+    assert_eq!(
+        p["context_window"]["current_usage"],
+        json!({
+            "input_tokens": 300,
+            "output_tokens": 90,
+            "cache_read_input_tokens": 100
+        })
+    );
+    assert_eq!(
+        p["codex"]["tokens"],
+        json!({
+            "input": 50_400,
+            "cached_input": 20_000,
+            "output": 2_090,
+            "reasoning_output": 900,
+            "total": 52_490
+        })
+    );
+}
+
+#[test]
+fn fresh_session_omits_unknown_usage_and_percentages() {
+    let mut snapshot = payload_snapshot();
+    snapshot.total_tokens = None;
+    snapshot.last_tokens = None;
+    snapshot.context_used_percentage = None;
+    snapshot.context_remaining_percentage = None;
+    let p = payload(&snapshot);
+    let context = &p["context_window"];
+    assert_eq!(context["context_window_size"], 200_000);
+    for field in [
+        "total_input_tokens",
+        "total_output_tokens",
+        "current_usage",
+        "used_percentage",
+        "remaining_percentage",
+    ] {
+        assert!(context.get(field).is_none(), "unexpected {field}");
+    }
+    assert!(
+        p["codex"]
+            .get("tokens")
+            .is_none_or(serde_json::Value::is_null)
+    );
+}
+
+#[test]
+fn cached_input_larger_than_input_clamps_uncached_input_to_zero() {
+    let mut snapshot = payload_snapshot();
+    snapshot.last_tokens = Some(counts(40, 60, 5, 0, 45));
+    let p = payload(&snapshot);
+    assert_eq!(p["context_window"]["current_usage"]["input_tokens"], 0);
+    assert_eq!(
+        p["context_window"]["current_usage"]["cache_read_input_tokens"],
+        60
+    );
+}
+
+#[test]
+fn common_rate_limits_follow_exact_window_lengths_even_when_source_order_is_swapped() {
+    let mut snapshot = payload_snapshot();
+    snapshot.rate_limits = vec![
+        StatusLineRateLimitWindow {
+            used_percent: 70.0,
+            resets_at: Some(1_791_544_719),
+            window_minutes: Some(10_080),
+        },
+        StatusLineRateLimitWindow {
+            used_percent: 12.5,
+            resets_at: Some(1_791_500_000),
+            window_minutes: Some(300),
+        },
+    ];
+    let p = payload(&snapshot);
+    assert_eq!(
+        p["rate_limits"]["five_hour"],
+        json!({"used_percentage": 12.5, "resets_at": 1_791_500_000})
+    );
+    assert_eq!(
+        p["rate_limits"]["seven_day"],
+        json!({"used_percentage": 70.0, "resets_at": 1_791_544_719})
+    );
+    assert_eq!(p["codex"]["rate_limits"][0]["window_minutes"], 10_080);
+    assert_eq!(p["codex"]["rate_limits"][1]["window_minutes"], 300);
+}
+
+#[test]
+fn unusual_and_unknown_windows_remain_only_in_codex_extras() {
+    let mut snapshot = payload_snapshot();
+    snapshot.rate_limits = vec![
+        StatusLineRateLimitWindow {
+            used_percent: 35.0,
+            resets_at: None,
+            window_minutes: Some(60),
+        },
+        StatusLineRateLimitWindow {
+            used_percent: 50.0,
+            resets_at: Some(1_791_500_000),
+            window_minutes: None,
+        },
+    ];
+    let p = payload(&snapshot);
+    assert!(p["rate_limits"].get("five_hour").is_none());
+    assert!(p["rate_limits"].get("seven_day").is_none());
+    assert_eq!(
+        p["codex"]["rate_limits"][0],
+        json!({"used_percent": 35.0, "resets_at": null, "window_minutes": 60})
+    );
+    assert_eq!(
+        p["codex"]["rate_limits"][1],
+        json!({"used_percent": 50.0, "resets_at": 1_791_500_000, "window_minutes": null})
+    );
+}
+
+#[test]
+fn invalid_percentages_and_window_metadata_are_not_emitted() {
+    let mut snapshot = payload_snapshot();
+    snapshot.context_used_percentage = Some(f64::NAN);
+    snapshot.context_remaining_percentage = Some(101.0);
+    snapshot.rate_limits = vec![
+        StatusLineRateLimitWindow {
+            used_percent: -1.0,
+            resets_at: Some(123),
+            window_minutes: Some(300),
+        },
+        StatusLineRateLimitWindow {
+            used_percent: f64::INFINITY,
+            resets_at: None,
+            window_minutes: Some(10_080),
+        },
+        StatusLineRateLimitWindow {
+            used_percent: 42.0,
+            resets_at: Some(-1),
+            window_minutes: Some(0),
+        },
+    ];
+    let p = payload(&snapshot);
+    assert!(p["context_window"].get("used_percentage").is_none());
+    assert!(p["context_window"].get("remaining_percentage").is_none());
+    assert!(p["rate_limits"].get("five_hour").is_none());
+    assert!(p["rate_limits"].get("seven_day").is_none());
+    assert_eq!(
+        p["codex"]["rate_limits"],
+        json!([{"used_percent": 42.0, "resets_at": null, "window_minutes": null}])
+    );
+}
+
+#[test]
+fn invalid_counts_are_omitted_individually_without_json_precision_loss() {
+    const UNSAFE: i64 = 9_007_199_254_740_992;
+    let mut snapshot = payload_snapshot();
+    snapshot.compactions = -1;
+    snapshot.session_wall_duration_ms = UNSAFE;
+    snapshot.context_window_size = Some(-1);
+    snapshot.total_tokens = Some(counts(-1, UNSAFE, 4, -5, UNSAFE));
+    snapshot.last_tokens = Some(counts(-1, UNSAFE, 4, 0, 4));
+    let p = payload(&snapshot);
+    let tokens = &p["codex"]["tokens"];
+    for field in ["input", "cached_input", "reasoning_output", "total"] {
+        assert!(tokens.get(field).is_none(), "unexpected {field}");
+    }
+    assert_eq!(tokens["output"], 4);
+    assert!(p["codex"].get("compactions").is_none());
+    assert!(p["cost"].get("total_duration_ms").is_none());
+    assert!(p["context_window"].get("context_window_size").is_none());
+    assert!(p["context_window"].get("total_input_tokens").is_none());
+    assert_eq!(p["context_window"]["total_output_tokens"], 4);
+    assert!(
+        p["context_window"]["current_usage"]
+            .get("input_tokens")
+            .is_none()
+    );
+    assert!(
+        p["context_window"]["current_usage"]
+            .get("cache_read_input_tokens")
+            .is_none()
+    );
+    assert_eq!(p["context_window"]["current_usage"]["output_tokens"], 4);
+
+    snapshot.total_tokens = Some(counts(5, 1, UNSAFE, 0, UNSAFE));
+    snapshot.last_tokens = Some(counts(5, 1, UNSAFE, 0, UNSAFE));
+    let p = payload(&snapshot);
+    assert_eq!(p["context_window"]["total_input_tokens"], 5);
+    assert!(p["context_window"].get("total_output_tokens").is_none());
+    assert_eq!(p["context_window"]["current_usage"]["input_tokens"], 4);
+    assert_eq!(
+        p["context_window"]["current_usage"]["cache_read_input_tokens"],
+        1
+    );
+    assert!(
+        p["context_window"]["current_usage"]
+            .get("output_tokens")
+            .is_none()
+    );
+}
+
+#[test]
+fn maximum_safe_integer_counts_are_accepted() {
+    const MAX_SAFE: i64 = 9_007_199_254_740_991;
+    let mut snapshot = payload_snapshot();
+    snapshot.compactions = MAX_SAFE;
+    snapshot.session_wall_duration_ms = MAX_SAFE;
+    snapshot.total_tokens = Some(counts(MAX_SAFE, 0, 0, 0, MAX_SAFE));
+    snapshot.last_tokens = Some(counts(MAX_SAFE, 0, 0, 0, MAX_SAFE));
+    let p = payload(&snapshot);
+    assert_eq!(p["codex"]["tokens"]["input"], MAX_SAFE);
+    assert_eq!(p["codex"]["compactions"], MAX_SAFE);
+    assert_eq!(p["cost"]["total_duration_ms"], MAX_SAFE);
+    assert_eq!(p["context_window"]["total_input_tokens"], MAX_SAFE);
+    assert_eq!(
+        p["context_window"]["current_usage"]["input_tokens"],
+        MAX_SAFE
+    );
+}
+
+#[test]
+fn payload_does_not_claim_unsupported_claude_or_api_fields() {
+    let p = payload(&payload_snapshot());
+    for field in [
+        "transcript_path",
+        "vim",
+        "worktree",
+        "api_duration_ms",
+        "total_cost_usd",
+    ] {
+        assert!(p.get(field).is_none(), "unexpected {field}");
+        assert!(p["codex"].get(field).is_none(), "unexpected codex.{field}");
+    }
+    assert!(p["cost"].get("total_cost_usd").is_none());
+    assert!(p["rate_limits"].get("primary").is_none());
+    assert!(p["rate_limits"].get("secondary").is_none());
+}
+
+#[test]
+fn launch_baseline_needs_a_later_valid_sample_for_speed() {
+    let snapshot = payload_snapshot();
+    let launch = StatusLineLaunchState::new(snapshot.total_tokens);
+    let first = build_status_line_payload(&snapshot, &launch);
+    assert!(
+        first["codex"]
+            .get("speed_tokens")
+            .is_none_or(serde_json::Value::is_null)
+    );
+    assert!(
+        first["codex"]
+            .get("turn_wall_duration_ms")
+            .is_none_or(|wall| wall.is_null() || *wall == json!(0))
+    );
+
+    let mut later_snapshot = snapshot;
+    later_snapshot.total_tokens = Some(counts(50_800, 20_100, 2_180, 930, 52_980));
+    let mut launch = launch;
+    launch.observe_tokens(later_snapshot.total_tokens, 5_000);
+    let later = build_status_line_payload(&later_snapshot, &launch);
+    assert_eq!(later["codex"]["turn_wall_duration_ms"], 5_000);
+    assert_eq!(
+        later["codex"]["speed_tokens"],
+        json!({"input": 400, "output": 90, "total": 490})
+    );
+}
+
+#[test]
+fn late_first_token_baseline_restarts_the_matching_active_time_interval() {
+    let mut snapshot = payload_snapshot();
+    snapshot.total_tokens = None;
+    snapshot.last_tokens = None;
+    snapshot.session_wall_duration_ms = 10_000;
+    let mut launch = StatusLineLaunchState::new(None);
+
+    let first_total = counts(100, 25, 20, 5, 120);
+    snapshot.total_tokens = Some(first_total);
+    launch.observe_tokens(Some(first_total), 3_000);
+    let first = build_status_line_payload(&snapshot, &launch);
+    assert_eq!(first["cost"]["total_duration_ms"], 10_000);
+    assert_eq!(first["codex"]["tokens"]["total"], 120);
+    assert!(
+        first["codex"]
+            .get("speed_tokens")
+            .is_none_or(serde_json::Value::is_null)
+    );
+    assert!(
+        first["codex"]
+            .get("turn_wall_duration_ms")
+            .is_none_or(|wall| wall.is_null() || *wall == json!(0))
+    );
+
+    let later_total = counts(140, 30, 35, 8, 175);
+    snapshot.total_tokens = Some(later_total);
+    snapshot.session_wall_duration_ms = 14_000;
+    launch.observe_tokens(Some(later_total), 7_000);
+    let later = build_status_line_payload(&snapshot, &launch);
+    assert_eq!(later["cost"]["total_duration_ms"], 14_000);
+    assert_eq!(later["context_window"]["total_input_tokens"], 140);
+    assert_eq!(later["codex"]["tokens"]["total"], 175);
+    assert_eq!(later["codex"]["turn_wall_duration_ms"], 4_000);
+    assert_eq!(
+        later["codex"]["speed_tokens"],
+        json!({"input": 40, "output": 15, "total": 55})
+    );
+}
+
+#[test]
+fn active_time_without_new_tokens_counts_toward_the_matching_speed_interval() {
+    let mut snapshot = payload_snapshot();
+    let mut launch = StatusLineLaunchState::new(snapshot.total_tokens);
+    snapshot.total_tokens = None;
+    launch.observe_tokens(None, 3_000);
+    let during_gap = build_status_line_payload(&snapshot, &launch);
+    assert_eq!(during_gap["codex"]["turn_wall_duration_ms"], 3_000);
+    assert!(
+        during_gap["codex"]
+            .get("speed_tokens")
+            .is_none_or(serde_json::Value::is_null)
+    );
+
+    let later_total = counts(50_440, 20_000, 2_100, 900, 52_540);
+    snapshot.total_tokens = Some(later_total);
+    launch.observe_tokens(Some(later_total), 7_000);
+    let later = build_status_line_payload(&snapshot, &launch);
+    assert_eq!(later["codex"]["turn_wall_duration_ms"], 7_000);
+    assert_eq!(
+        later["codex"]["speed_tokens"],
+        json!({"input": 40, "output": 10, "total": 50})
+    );
+}
+
+#[test]
+fn resume_restarts_launch_clock_and_baseline_while_retaining_thread_totals() {
+    let mut snapshot = payload_snapshot();
+    let mut launch = StatusLineLaunchState::new(Some(counts(100, 20, 10, 2, 110)));
+    launch.observe_tokens(snapshot.total_tokens, 9_000);
+    launch.resume(snapshot.total_tokens);
+    snapshot.session_wall_duration_ms = 0;
+    let p = build_status_line_payload(&snapshot, &launch);
+    assert_eq!(p["cost"]["total_duration_ms"], 0);
+    assert_eq!(p["codex"]["turn_wall_duration_ms"], 0);
+    assert!(
+        p["codex"]
+            .get("speed_tokens")
+            .is_none_or(serde_json::Value::is_null)
+    );
+    assert_eq!(p["codex"]["tokens"]["total"], 52_490);
+    assert_eq!(p["context_window"]["total_input_tokens"], 50_400);
+}
+
+#[test]
+fn counter_reset_first_sample_omits_speed_and_rebases_from_new_total() {
+    let mut snapshot = payload_snapshot();
+    let mut launch = StatusLineLaunchState::new(snapshot.total_tokens);
+    snapshot.total_tokens = Some(counts(20, 2, 5, 1, 25));
+    launch.observe_tokens(snapshot.total_tokens, 3_000);
+    let p = build_status_line_payload(&snapshot, &launch);
+    assert!(
+        p["codex"]
+            .get("speed_tokens")
+            .is_none_or(serde_json::Value::is_null)
+    );
+    assert_eq!(p["codex"]["tokens"]["input"], 20);
+}
+
+#[test]
+fn counter_reset_restarts_both_speed_tokens_and_active_time() {
+    let mut snapshot = payload_snapshot();
+    let mut launch = StatusLineLaunchState::new(snapshot.total_tokens);
+    launch.observe_tokens(Some(counts(50_800, 20_100, 2_180, 930, 52_980)), 2_000);
+
+    let reset_total = counts(20, 2, 5, 1, 25);
+    snapshot.total_tokens = Some(reset_total);
+    snapshot.session_wall_duration_ms = 20_000;
+    launch.observe_tokens(Some(reset_total), 3_000);
+    let reset = build_status_line_payload(&snapshot, &launch);
+    assert_eq!(reset["cost"]["total_duration_ms"], 20_000);
+    assert_eq!(reset["codex"]["tokens"]["total"], 25);
+    assert!(
+        reset["codex"]
+            .get("speed_tokens")
+            .is_none_or(serde_json::Value::is_null)
+    );
+    assert!(
+        reset["codex"]
+            .get("turn_wall_duration_ms")
+            .is_none_or(|wall| wall.is_null() || *wall == json!(0))
+    );
+
+    let later_total = counts(50, 3, 15, 2, 65);
+    snapshot.total_tokens = Some(later_total);
+    snapshot.session_wall_duration_ms = 25_000;
+    launch.observe_tokens(Some(later_total), 8_000);
+    let later = build_status_line_payload(&snapshot, &launch);
+    assert_eq!(later["cost"]["total_duration_ms"], 25_000);
+    assert_eq!(later["context_window"]["total_input_tokens"], 50);
+    assert_eq!(later["codex"]["tokens"]["total"], 65);
+    assert_eq!(later["codex"]["turn_wall_duration_ms"], 5_000);
+    assert_eq!(
+        later["codex"]["speed_tokens"],
+        json!({"input": 30, "output": 10, "total": 40})
+    );
+}
 
 fn stack(entries: Vec<(ConfigLayerSource, &str)>) -> ConfigLayerStack {
     let layers = entries

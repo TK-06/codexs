@@ -3,6 +3,93 @@
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
 use serde::Deserialize;
+use serde_json::Value;
+
+/// Plain values captured by the TUI before constructing a status-line payload.
+/// The producer of this snapshot is wired in a later task.
+#[derive(Clone, Debug, Default)]
+#[allow(dead_code)]
+pub(crate) struct StatusLinePayloadSnapshot {
+    pub(crate) session_id: String,
+    pub(crate) cwd: String,
+    pub(crate) model_id: String,
+    pub(crate) model_display_name: String,
+    pub(crate) effort_level: Option<String>,
+    pub(crate) version: String,
+    pub(crate) mode: String,
+    pub(crate) approval_mode: String,
+    pub(crate) sandbox: String,
+    pub(crate) thread_name: Option<String>,
+    pub(crate) compactions: i64,
+    pub(crate) context_window_size: Option<i64>,
+    pub(crate) context_used_percentage: Option<f64>,
+    pub(crate) context_remaining_percentage: Option<f64>,
+    pub(crate) total_tokens: Option<StatusLineTokenCounts>,
+    pub(crate) last_tokens: Option<StatusLineTokenCounts>,
+    pub(crate) rate_limits: Vec<StatusLineRateLimitWindow>,
+    pub(crate) session_wall_duration_ms: i64,
+}
+
+/// Raw protocol token counts. Input already includes cached input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct StatusLineTokenCounts {
+    pub(crate) input: i64,
+    pub(crate) cached_input: i64,
+    pub(crate) output: i64,
+    pub(crate) reasoning_output: i64,
+    pub(crate) total: i64,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
+pub(crate) struct StatusLineRateLimitWindow {
+    pub(crate) used_percent: f64,
+    pub(crate) resets_at: Option<i64>,
+    pub(crate) window_minutes: Option<i64>,
+}
+
+/// Launch-local state; its wall time covers active turns after this launch/resume.
+#[derive(Clone, Debug, Default)]
+#[allow(dead_code)]
+pub(crate) struct StatusLineLaunchState {
+    baseline: Option<StatusLineTokenCounts>,
+    speed_tokens: Option<StatusLineTokenCounts>,
+    pub(crate) turn_wall_duration_ms: i64,
+}
+
+#[allow(dead_code)]
+impl StatusLineLaunchState {
+    pub(crate) fn new(initial_total: Option<StatusLineTokenCounts>) -> Self {
+        Self {
+            baseline: initial_total,
+            ..Self::default()
+        }
+    }
+
+    /// `active_wall_duration_ms` is cumulative active-turn time since this launch.
+    /// A missing token sample still advances that clock.
+    pub(crate) fn observe_tokens(
+        &mut self,
+        _total: Option<StatusLineTokenCounts>,
+        _active_wall_duration_ms: i64,
+    ) {
+        // Filled in after the focused payload tests produce hosted assertion RED.
+    }
+
+    pub(crate) fn resume(&mut self, initial_total: Option<StatusLineTokenCounts>) {
+        *self = Self::new(initial_total);
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn build_status_line_payload(
+    _snapshot: &StatusLinePayloadSnapshot,
+    _launch: &StatusLineLaunchState,
+) -> Value {
+    // The payload behavior is intentionally deferred until hosted assertion RED.
+    serde_json::json!({})
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub(crate) struct StatusLineCommandConfig {
