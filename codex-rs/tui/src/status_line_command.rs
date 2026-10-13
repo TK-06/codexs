@@ -227,7 +227,7 @@ pub(crate) fn build_status_line_payload(
         {
             current.insert(
                 "input_tokens".to_string(),
-                json!(input.saturating_sub(cached)),
+                json!(input.saturating_sub(cached).max(0)),
             );
         }
         insert_count(&mut current, "cache_read_input_tokens", last.cached_input);
