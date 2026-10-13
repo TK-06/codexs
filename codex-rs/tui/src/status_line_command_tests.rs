@@ -120,9 +120,10 @@ async fn loaded_trusted_project_setting_is_ignored_and_reported() -> anyhow::Res
         dot_codex.join("config.toml"),
         "[tui.status_line_command]\ncommand = 'echo project-marker'\ntimeout_ms = 1\n",
     )?;
+    let project_cwd = AbsolutePathBuf::from_absolute_path(&project)?;
     let bootstrap = crate::legacy_core::config::load_config_toml_with_layer_stack(
         &home,
-        Some(AbsolutePathBuf::from_absolute_path(&project)?),
+        Some(&project_cwd),
         Vec::new(),
         codex_config::ConfigLoadOptions {
             loader_overrides: codex_config::LoaderOverrides::without_managed_config_for_tests(),
