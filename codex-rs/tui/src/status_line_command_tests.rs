@@ -8,7 +8,10 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 fn stack(entries: Vec<(ConfigLayerSource, &str)>) -> ConfigLayerStack {
     let layers = entries
         .into_iter()
-        .map(|(name, source)| ConfigLayerEntry::new(name, source.parse().expect("TOML fixture")))
+        .map(|(name, source)| {
+            let table = toml::from_str::<toml::Table>(source).expect("TOML fixture");
+            ConfigLayerEntry::new(name, toml::Value::Table(table))
+        })
         .collect();
     ConfigLayerStack::new(
         layers,
@@ -58,8 +61,13 @@ fn trusted_command_uses_defaults_and_zero_disables_periodic_refresh() {
 
 #[test]
 fn missing_or_blank_command_cannot_enable_execution() {
-    for value in ["", "[tui.status_line_command]\ncommand = '   '\n", "[tui.status_line_command]\n"] {
-        let resolved = StatusLineCommandResolution::from_layers(&stack(vec![(user_source(), value)]));
+    for value in [
+        "",
+        "[tui.status_line_command]\ncommand = '   '\n",
+        "[tui.status_line_command]\n",
+    ] {
+        let resolved =
+            StatusLineCommandResolution::from_layers(&stack(vec![(user_source(), value)]));
         assert!(resolved.config.is_none(), "{value}");
     }
 }
@@ -72,9 +80,15 @@ fn invalid_trusted_types_fail_closed_with_parse_warning() {
         "[tui.status_line_command]\ncommand = 'echo'\nrefresh_interval_secs = -1\n",
         "[tui]\nstatus_line_command = 'echo'\n",
     ] {
-        let resolved = StatusLineCommandResolution::from_layers(&stack(vec![(user_source(), value)]));
+        let resolved =
+            StatusLineCommandResolution::from_layers(&stack(vec![(user_source(), value)]));
         assert!(resolved.config.is_none(), "{value}");
-        assert!(resolved.warnings.contains(&StatusLineCommandWarning::InvalidTrustedConfig), "{value}");
+        assert!(
+            resolved
+                .warnings
+                .contains(&StatusLineCommandWarning::InvalidTrustedConfig),
+            "{value}"
+        );
     }
 }
 
@@ -88,8 +102,14 @@ fn non_project_layers_merge_in_precedence_order() {
             },
             "[tui.status_line_command]\ncommand = 'echo system'\ntimeout_ms = 100\n",
         ),
-        (user_source(), "[tui.status_line_command]\ncommand = 'echo user'\n"),
-        (ConfigLayerSource::SessionFlags, "[tui.status_line_command]\ntimeout_ms = 3000\n"),
+        (
+            user_source(),
+            "[tui.status_line_command]\ncommand = 'echo user'\n",
+        ),
+        (
+            ConfigLayerSource::SessionFlags,
+            "[tui.status_line_command]\ntimeout_ms = 3000\n",
+        ),
     ]);
     let resolved = StatusLineCommandResolution::from_layers(&layers);
     assert_eq!(
@@ -114,7 +134,9 @@ async fn loaded_trusted_project_setting_is_ignored_and_reported() -> anyhow::Res
     let project_key = toml::Value::String(project.to_string_lossy().to_string());
     std::fs::write(
         home.join("config.toml"),
-        format!("[projects.{project_key}]\ntrust_level = 'trusted'\n[tui]\nstatus_line = ['model-with-reasoning']\n[tui.status_line_command]\ncommand = 'echo user'\n"),
+        format!(
+            "[projects.{project_key}]\ntrust_level = 'trusted'\n[tui]\nstatus_line = ['model-with-reasoning']\n[tui.status_line_command]\ncommand = 'echo user'\n"
+        ),
     )?;
     std::fs::write(
         dot_codex.join("config.toml"),
@@ -131,18 +153,43 @@ async fn loaded_trusted_project_setting_is_ignored_and_reported() -> anyhow::Res
         },
     )
     .await?;
-    assert!(bootstrap.config_layer_stack.layers_low_to_high().any(|layer| {
-        matches!(layer.name, ConfigLayerSource::Project { .. })
-            && layer.config.get("tui").and_then(|value| value.get("status_line_command"))
-                .and_then(|value| value.get("command"))
-                .and_then(toml::Value::as_str) == Some("echo project-marker")
-    }), "the loader must actually include the configured project layer");
+    assert!(
+        bootstrap
+            .config_layer_stack
+            .layers_low_to_high()
+            .any(|layer| {
+                matches!(layer.name, ConfigLayerSource::Project { .. })
+                    && layer
+                        .config
+                        .get("tui")
+                        .and_then(|value| value.get("status_line_command"))
+                        .and_then(|value| value.get("command"))
+                        .and_then(toml::Value::as_str)
+                        == Some("echo project-marker")
+            }),
+        "the loader must actually include the configured project layer"
+    );
     let local = crate::local_settings::LocalSettings::from_bootstrap(
         &bootstrap,
         AbsolutePathBuf::from_absolute_path(&home)?,
     )?;
-    assert_eq!(local.status_line_command.config.as_ref().map(|config| config.command.as_str()), Some("echo user"));
-    assert!(local.status_line_command.warnings.contains(&StatusLineCommandWarning::IgnoredProjectConfig));
-    assert_eq!(local.tui.status_line, Some(vec!["model-with-reasoning".to_string()]));
+    assert_eq!(
+        local
+            .status_line_command
+            .config
+            .as_ref()
+            .map(|config| config.command.as_str()),
+        Some("echo user")
+    );
+    assert!(
+        local
+            .status_line_command
+            .warnings
+            .contains(&StatusLineCommandWarning::IgnoredProjectConfig)
+    );
+    assert_eq!(
+        local.tui.status_line,
+        Some(vec!["model-with-reasoning".to_string()])
+    );
     Ok(())
 }
