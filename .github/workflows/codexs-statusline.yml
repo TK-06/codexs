@@ -10,21 +10,225 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: 'feature, full, baseline, or build (manual dispatch needs this workflow on the default branch)'
+        description: 'integration runs full, baseline and build concurrently; manual dispatch needs this workflow on the default branch'
         required: true
         type: choice
         default: feature
-        options: [feature, full, baseline, build]
+        options: [feature, full, baseline, build, integration]
 
 permissions:
   contents: read
 
 concurrency:
-  group: codexs-statusline-${{ github.ref }}
-  cancel-in-progress: true
+  group: codexs-statusline-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'feature' || inputs.scope }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  plan:
+    name: Resolve execution plan
+    runs-on: windows-2022
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.scopes.outputs.matrix }}
+    steps:
+      - name: Resolve execution scopes
+        id: scopes
+        shell: powershell
+        env:
+          REQUESTED_SCOPE: ${{ inputs.scope }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -eq 'push') { $scopes = @('feature') }
+          elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            if ($env:REQUESTED_SCOPE -ceq 'integration') { $scopes = @('full', 'baseline', 'build') }
+            elseif ($env:REQUESTED_SCOPE -cin @('feature', 'full', 'baseline', 'build')) { $scopes = @($env:REQUESTED_SCOPE) }
+            else { throw "Unsupported scope: $env:REQUESTED_SCOPE" }
+          } else { throw "Unsupported event: $env:GITHUB_EVENT_NAME" }
+          $matrix = @{ scope=$scopes } | ConvertTo-Json -Compress
+          "matrix=$matrix" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+  quick_checks:
+    name: Quick workflow and status-line formatting checks
+    runs-on: windows-2022
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Checkout current source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Install pinned Rust formatter
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          toolchain: 1.95.0
+          components: rustfmt
+
+      - name: Verify workflow behavior without compiling Rust
+        run: |
+          $WorkflowPath = Join-Path (Get-Location) '.github/workflows/codexs-statusline.yml'
+          $ErrorActionPreference = 'Stop'
+          $workflow = Get-Content -LiteralPath $WorkflowPath -Raw
+          $probeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('codexs-ci-probe-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $probeRoot | Out-Null
+          $result = @{ passed=0; failures=[System.Collections.Generic.List[string]]::new() }
+          try {
+          function StepScript([string]$name) {
+              foreach ($match in [regex]::Matches($workflow, '(?ms)^      - name: (?<name>[^\r\n]+)\r?\n(?<body>.*?)(?=^      - name: |\z)')) {
+                  if ($match.Groups['name'].Value.Trim() -cne $name) { continue }
+                  $script = [regex]::Match($match.Groups['body'].Value, '(?m)^        run: \|\r?\n(?<script>(?:^          [^\r\n]*(?:\r?\n|$)|^\r?\n)+)')
+                  if ($script.Success) { return ([regex]::Replace($script.Groups['script'].Value, '(?m)^          ', '')) }
+              }
+              return $null
+          }
+          function Check([string]$name, [scriptblock]$body) {
+              try { & $body; $result.passed++; Write-Host "PASS $name" }
+              catch { $result.failures.Add("$name`: $($_.Exception.Message)"); Write-Host "FAIL $name`: $($_.Exception.Message)" }
+          }
+          function Equal($actual, $expected) {
+              if (($actual -join "`n") -cne ($expected -join "`n")) { throw "expected [$($expected -join ', ')] but got [$($actual -join ', ')]" }
+          }
+          # Break caught: a push inherits a manual request, integration loses a scope,
+          # or invalid manual input reaches a native runner. Execute the real selector.
+          $selector = StepScript 'Resolve execution scopes'
+          if (-not $selector) { $selector = StepScript 'Select validated scope' }
+          foreach ($case in @(
+              @{name='push always selects feature'; event='push'; request='integration'; want=@('feature')},
+              @{name='manual feature'; event='workflow_dispatch'; request='feature'; want=@('feature')},
+              @{name='manual full'; event='workflow_dispatch'; request='full'; want=@('full')},
+              @{name='manual baseline'; event='workflow_dispatch'; request='baseline'; want=@('baseline')},
+              @{name='manual build'; event='workflow_dispatch'; request='build'; want=@('build')},
+              @{name='integration expands three independent scopes'; event='workflow_dispatch'; request='integration'; want=@('full','baseline','build')}
+          )) {
+              Check $case.name {
+                  $env:GITHUB_EVENT_NAME = $case.event
+                  $env:REQUESTED_SCOPE = $case.request
+                  $env:RUNNER_TEMP = $probeRoot
+                  $env:GITHUB_RUN_ID = 'synthetic-run'
+                  $env:GITHUB_RUN_ATTEMPT = [guid]::NewGuid().ToString('N')
+                  $env:GITHUB_OUTPUT = Join-Path $probeRoot ($env:GITHUB_RUN_ATTEMPT + '.output')
+                  $env:GITHUB_ENV = Join-Path $probeRoot ($env:GITHUB_RUN_ATTEMPT + '.env')
+                  try { & ([scriptblock]::Create($selector)) | Out-Null } catch { throw "selector rejected valid input: $($_.Exception.Message)" }
+                  $output = @(Get-Content -LiteralPath $env:GITHUB_OUTPUT -ErrorAction SilentlyContinue)
+                  $matrix = @($output | Where-Object { $_.StartsWith('matrix=') })
+                  if ($matrix.Count -ne 1) { throw 'selector did not emit one runnable matrix' }
+                  Equal @(($matrix[0].Substring(7) | ConvertFrom-Json).scope) $case.want
+              }
+          }
+          foreach ($request in @('', 'unknown', 'feature,build', '../baseline')) {
+              Check "invalid request [$request] fails closed" {
+                  $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
+                  $env:REQUESTED_SCOPE = $request
+                  $env:GITHUB_OUTPUT = Join-Path $probeRoot ([guid]::NewGuid().ToString('N') + '.output')
+                  $rejected = $false
+                  try { & ([scriptblock]::Create($selector)) | Out-Null } catch { $rejected = $true }
+                  Equal $rejected $true
+                  Equal (Test-Path -LiteralPath $env:GITHUB_OUTPUT) $false
+              }
+          }
+          # Break caught: two matrix scopes write to the same log directory.
+          $selection = StepScript 'Select validated scope'
+          Check 'matrix scopes produce separate log directories' {
+              $paths = @()
+              foreach ($scope in @('full','baseline','build')) {
+                  $env:MATRIX_SCOPE = $scope
+                  $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
+                  $env:REQUESTED_SCOPE = $scope
+                  $env:GITHUB_RUN_ID = 'synthetic-matrix'
+                  $env:GITHUB_RUN_ATTEMPT = '1'
+                  $env:RUNNER_TEMP = $probeRoot
+                  $env:GITHUB_OUTPUT = Join-Path $probeRoot ($scope + '.output')
+                  $env:GITHUB_ENV = Join-Path $probeRoot ($scope + '.env')
+                  & ([scriptblock]::Create($selection)) | Out-Null
+                  $entry = Get-Content -LiteralPath $env:GITHUB_ENV | Where-Object { $_.StartsWith('CODEXS_LOG_DIR=') }
+                  $paths += $entry.Substring(15)
+              }
+              Equal @($paths | Select-Object -Unique).Count 3
+          }
+          # Only the expensive external Rust compiler is replaced. The real runner
+          # resolves a native executable, passes arguments, captures output and exits.
+          $fakeBin = Join-Path $probeRoot 'native'
+          New-Item -ItemType Directory -Path $fakeBin | Out-Null
+          $fakeExe = Join-Path $fakeBin 'rustup.exe'
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.IO;
+          public static class CodexsCargoBoundaryProbe {
+              public static int Main(string[] args) {
+                  File.WriteAllLines(Environment.GetEnvironmentVariable("CODEXS_PROBE_ARGS"), args);
+                  Console.WriteLine("synthetic native boundary probe (no Rust build)");
+                  return int.Parse(Environment.GetEnvironmentVariable("CODEXS_PROBE_EXIT"));
+              }
+          }
+          '@ -OutputAssembly $fakeExe -OutputType ConsoleApplication
+          $env:PATH = $fakeBin + ';' + $env:PATH
+          if ((Get-Command rustup.exe -ErrorAction Stop).Source -cne $fakeExe) { throw 'Native probe executable did not resolve; refusing to run Rust' }
+          $native = StepScript 'Run guarded native Cargo operation'
+          $runner = [regex]::Match($native, '(?ms)^\$runnerSource = @''\r?\n(?<source>.*?)^''@').Groups['source'].Value
+          foreach ($case in @(
+              @{scope='feature'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-tui','--config','profile.release.package.codex-tui.opt-level=1','--timings','--lib','status_line_command')},
+              @{scope='full'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-tui','--config','profile.release.package.codex-tui.opt-level=1','--timings','--no-fail-fast')},
+              @{scope='baseline'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-tui','--config','profile.release.package.codex-tui.opt-level=1','--timings','--no-fail-fast')},
+              @{scope='build'; want=@('run','1.95.0','cargo','build','--release','--locked','-p','codex-cli','--bin','codex','--timings')}
+          )) {
+              foreach ($nativeExit in @(0,101)) {
+                  Check "$($case.scope) passes intended Cargo args and preserves exit $nativeExit" {
+                      $id = [guid]::NewGuid().ToString('N')
+                      $env:CODEXS_PROBE_ARGS = Join-Path $probeRoot ($id + '.args')
+                      $env:CODEXS_PROBE_EXIT = "$nativeExit"
+                      $statePath = Join-Path $probeRoot ($id + '.json')
+                      $state = @{
+                          workdir=$probeRoot; scope=$case.scope; source_sha=('a' * 40)
+                          cargo_log=(Join-Path $probeRoot ($id + '.log'))
+                          native_exit=(Join-Path $probeRoot ($id + '.exit'))
+                          runner_error=(Join-Path $probeRoot ($id + '.error'))
+                      }
+                      $state | ConvertTo-Json | Out-File -LiteralPath $statePath -Encoding utf8
+                      $env:CODEXS_GUARD_STATE = $statePath
+                      $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$ProgressPreference = 'SilentlyContinue'`n" + $runner))
+                      & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded > $null 2> (Join-Path $probeRoot ($id + '.stderr'))
+                      $exitCode = $LASTEXITCODE
+                      Equal $exitCode $nativeExit
+                      Equal (Get-Content -LiteralPath $state.native_exit) "$nativeExit"
+                      Equal @(Get-Content -LiteralPath $env:CODEXS_PROBE_ARGS) $case.want
+                  }
+              }
+          }
+          } finally {
+          $resolvedProbe = [System.IO.Path]::GetFullPath($probeRoot)
+          $resolvedTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+          if (-not $resolvedProbe.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase) -or
+              [System.IO.Path]::GetFileName($resolvedProbe) -notmatch '^codexs-ci-probe-[0-9a-f]{32}$') { throw 'Unsafe probe cleanup path' }
+          Remove-Item -LiteralPath $resolvedProbe -Recurse -Force -ErrorAction Stop
+          }
+          Write-Host "RESULT passed=$($result.passed) failed=$($result.failures.Count)"
+          if ($result.failures.Count) { throw ($result.failures -join "`n") }
+
+      - name: Check status-line Rust formatting
+        working-directory: codex-rs
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(
+            'tui/src/status_line_command.rs',
+            'tui/src/status_line_command_tests.rs',
+            'tui/src/chatwidget/status_line_command_glue.rs',
+            'tui/src/chatwidget/status_line_command_integration_tests.rs'
+          ) | Where-Object { Test-Path -LiteralPath $_ }
+          if (@($files).Count -eq 0) { throw 'No status-line source files found' }
+          & rustup run 1.95.0 rustfmt --edition 2024 --check @files
+          $nativeExit = $LASTEXITCODE
+          if ($nativeExit -ne 0) { throw "Status-line formatting failed: $nativeExit" }
+
   windows:
+    name: Windows (${{ matrix.scope }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: windows-2022
     timeout-minutes: 180
     defaults:
@@ -40,11 +244,11 @@ jobs:
       - name: Select validated scope
         id: scope
         env:
-          REQUESTED_SCOPE: ${{ github.event.inputs.scope }}
+          MATRIX_SCOPE: ${{ matrix.scope }}
         run: |
-          $scope = if ($env:GITHUB_EVENT_NAME -eq 'push') { 'feature' } else { $env:REQUESTED_SCOPE }
+          $scope = $env:MATRIX_SCOPE
           if ($scope -cnotin @('feature', 'full', 'baseline', 'build')) { throw "Unsupported scope: $scope" }
-          $logDir = Join-Path $env:RUNNER_TEMP "codexs-statusline-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $logDir = Join-Path $env:RUNNER_TEMP "codexs-statusline-$scope-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           New-Item -ItemType Directory -Path $logDir -ErrorAction Stop | Out-Null
           "scope=$scope" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           "CODEXS_SCOPE=$scope" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
@@ -93,7 +297,7 @@ jobs:
             $drives = @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | Sort-Object AvailableFreeSpace -Descending)
             if ($drives.Count -eq 0) { throw 'No readable fixed target drive' }
             $best = $drives[0]
-            $target = Join-Path $best.RootDirectory.FullName "codexs-target-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+            $target = Join-Path $best.RootDirectory.FullName "codexs-target-$env:CODEXS_SCOPE-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
             $target = [System.IO.Path]::GetFullPath($target)
             if ([System.IO.Path]::GetPathRoot($target) -cne $best.RootDirectory.FullName -or (Test-Path -LiteralPath $target)) { throw 'Target directory is not unique or on selected drive' }
             New-Item -ItemType Directory -Path $target -ErrorAction Stop | Out-Null
@@ -134,10 +338,10 @@ jobs:
             $rustup = (Get-Command rustup.exe -ErrorAction Stop).Source
             $cargoArgs = @('run', '1.95.0', 'cargo')
             if ($state.scope -eq 'build') {
-              $cargoArgs += @('build', '--release', '--locked', '-p', 'codex-cli', '--bin', 'codex')
+              $cargoArgs += @('build', '--release', '--locked', '-p', 'codex-cli', '--bin', 'codex', '--timings')
             } else {
-              $cargoArgs += @('test', '--release', '--locked', '-p', 'codex-tui', '--config', 'profile.release.package.codex-tui.opt-level=1')
-              if ($state.scope -eq 'feature') { $cargoArgs += 'status_line_command' }
+              $cargoArgs += @('test', '--release', '--locked', '-p', 'codex-tui', '--config', 'profile.release.package.codex-tui.opt-level=1', '--timings')
+              if ($state.scope -eq 'feature') { $cargoArgs += @('--lib', 'status_line_command') }
               else { $cargoArgs += '--no-fail-fast' }
             }
             "scope=$($state.scope) source=$($state.source_sha) rust=1.95.0 jobs=1 release=true locked=true lto=off debug=0 tui_opt=1 native_command=$rustup $($cargoArgs -join ' ')" | Out-File -LiteralPath $state.cargo_log -Encoding utf8
@@ -554,8 +758,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: codexs-statusline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}\codexs-statusline-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codexs-statusline-${{ matrix.scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}\codexs-statusline-${{ matrix.scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Cargo timing reports
+        if: always() && env.CARGO_TARGET_DIR != ''
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexs-timings-${{ matrix.scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CARGO_TARGET_DIR }}/cargo-timings/*.html
           if-no-files-found: warn
           retention-days: 14
 
