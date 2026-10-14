@@ -67,6 +67,32 @@ jobs:
           toolchain: 1.95.0
           components: rustfmt
 
+      - name: Verify quick-check GitHub exit boundary
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $workflow = Get-Content -LiteralPath '.github/workflows/codexs-statusline.yml' -Raw
+          $match = [regex]::Match($workflow, '(?ms)^      - name: Verify workflow behavior without compiling Rust\r?\n        run: \|\r?\n(?<code>.*?)(?=^      - name: |\z)')
+          if (-not $match.Success) { throw 'Cannot locate quick-check script for exit-boundary test' }
+          $body = [regex]::Replace($match.Groups['code'].Value, '(?m)^          ', '')
+          $probeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('codexs-ci-exit-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $probeRoot -ErrorAction Stop | Out-Null
+          try {
+            $env:CODEXS_STEP_EXIT_SCRIPT = Join-Path $probeRoot 'github-step.ps1'
+            # Reproduce actions/runner ScriptHandlerHelpers.FixUpScriptContents.
+            $wrapped = "`$ErrorActionPreference = 'stop'`n" + $body + "`nif ((Test-Path -LiteralPath variable:\LASTEXITCODE)) { exit `$LASTEXITCODE }"
+            [System.IO.File]::WriteAllText($env:CODEXS_STEP_EXIT_SCRIPT, $wrapped, [System.Text.UTF8Encoding]::new($false))
+            & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -Command '& ([scriptblock]::Create([System.IO.File]::ReadAllText($env:CODEXS_STEP_EXIT_SCRIPT)))'
+            $stepExit = $LASTEXITCODE
+            if ($stepExit -ne 0) { throw "Quick checks returned process exit $stepExit after expected negative native probes" }
+            Write-Host 'PASS successful quick checks return process exit 0 through GitHub wrapper'
+          } finally {
+            $resolvedProbe = [System.IO.Path]::GetFullPath($probeRoot)
+            $resolvedTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+            if (-not $resolvedProbe.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase) -or
+                [System.IO.Path]::GetFileName($resolvedProbe) -notmatch '^codexs-ci-exit-[0-9a-f]{32}$') { throw 'Unsafe exit-probe cleanup path' }
+            Remove-Item -LiteralPath $resolvedProbe -Recurse -Force -ErrorAction Stop
+          }
+
       - name: Verify workflow behavior without compiling Rust
         run: |
           $WorkflowPath = Join-Path (Get-Location) '.github/workflows/codexs-statusline.yml'
@@ -206,6 +232,8 @@ jobs:
           }
           Write-Host "RESULT passed=$($result.passed) failed=$($result.failures.Count)"
           if ($result.failures.Count) { throw ($result.failures -join "`n") }
+          # Expected nonzero probe exits have been checked; do not leak one to GitHub's shell epilogue.
+          exit 0
 
       - name: Check status-line Rust formatting
         working-directory: codex-rs
