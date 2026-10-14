@@ -4,6 +4,11 @@ use codex_config::ConfigLayerSource;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use ratatui::style::Color;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
+use ratatui::text::Line;
+use ratatui::text::Span;
 use serde_json::json;
 
 fn counts(
@@ -663,4 +668,241 @@ async fn loaded_trusted_project_setting_is_ignored_and_reported() -> anyhow::Res
         Some(vec!["model-with-reasoning".to_string()])
     );
     Ok(())
+}
+
+fn rendered(output: &[u8], width: usize) -> Line<'static> {
+    render_status_line_command_output(output, width).expect("visible command output should render")
+}
+
+fn rendered_text(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+}
+
+#[test]
+fn render_crlf_skips_empty_first_line_and_keeps_first_visible_line() {
+    let line = rendered(b"\r\nfirst\r\nsecond", 20);
+    assert_eq!(rendered_text(&line), "first");
+}
+
+#[test]
+fn render_skips_whitespace_only_and_escape_only_lines_but_preserves_selected_padding() {
+    let line = rendered(b" \t \n\x1b[31m\x1b[0m\n  keep  \nsecond", 20);
+    assert_eq!(rendered_text(&line), "  keep  ");
+    assert_eq!(line.width(), 8);
+}
+
+#[test]
+fn render_only_blank_and_escape_lines_produce_no_visible_line() {
+    assert!(render_status_line_command_output(b" \t\n\x1b[31m\x1b[0m\r\n", 20).is_none());
+}
+
+#[test]
+fn render_zero_width_does_not_fabricate_a_visible_line() {
+    assert!(render_status_line_command_output(b"hello", 0).is_none());
+}
+
+#[test]
+fn render_invalid_utf8_rejects_the_output_without_replacement_text() {
+    assert!(render_status_line_command_output(b"good\xff", 20).is_none());
+}
+
+#[test]
+fn render_c0_c1_and_delete_controls_cannot_reach_footer_text() {
+    let line = rendered(b"a\x00\x01\x7f\xc2\x80\xc2\x9fb", 20);
+    assert_eq!(rendered_text(&line), "ab");
+}
+
+#[test]
+fn render_csi_cursor_and_erase_controls_cannot_reach_footer_text() {
+    let line = rendered(b"A\x1b[2J\x1b[4CB\x1b[1D", 20);
+    assert_eq!(rendered_text(&line), "AB");
+}
+
+#[test]
+fn render_osc_title_content_and_terminator_cannot_reach_footer_text() {
+    let line = rendered(b"a\x1b]0;secret title\x07b", 20);
+    assert_eq!(rendered_text(&line), "ab");
+}
+
+#[test]
+fn render_osc_clipboard_content_and_terminator_cannot_reach_footer_text() {
+    let line = rendered(b"a\x1b]52;c;c2VjcmV0\x1b\\b", 20);
+    assert_eq!(rendered_text(&line), "ab");
+}
+
+#[test]
+fn render_osc_hyperlink_keeps_label_without_opening_or_closing_controls() {
+    let line = rendered(
+        b"\x1b]8;;https://example.invalid\x1b\\label\x1b]8;;\x1b\\",
+        20,
+    );
+    assert_eq!(rendered_text(&line), "label");
+}
+
+#[test]
+fn render_dcs_apc_and_pm_control_strings_cannot_reach_footer_text() {
+    let line = rendered(
+        b"a\x1bPsecret\x1b\\b\x1b_hidden\x1b\\c\x1b^private\x1b\\d",
+        20,
+    );
+    assert_eq!(rendered_text(&line), "abcd");
+}
+
+#[test]
+fn render_newline_inside_osc_control_string_does_not_select_hidden_content() {
+    let line = rendered(b"\x1b]0;hidden\ncontent\x07visible\nnext", 20);
+    assert_eq!(rendered_text(&line), "visible");
+}
+
+#[test]
+fn render_newline_inside_dcs_control_string_does_not_select_hidden_content() {
+    let line = rendered(b"\x1bPhidden\ncontent\x1b\\visible\nnext", 20);
+    assert_eq!(rendered_text(&line), "visible");
+}
+
+#[test]
+fn render_c1_osc_control_string_is_removed_with_its_content() {
+    let line = rendered("a\u{009d}0;hidden\u{009c}b".as_bytes(), 20);
+    assert_eq!(rendered_text(&line), "ab");
+}
+
+#[test]
+fn render_sgr_color_and_reset_create_only_safe_styled_spans() {
+    let line = rendered(b"\x1b[31mred\x1b[0mplain", 20);
+    assert_eq!(rendered_text(&line), "redplain");
+    assert_eq!(
+        line.spans,
+        vec![
+            Span::styled("red", Style::default().fg(Color::Red)),
+            Span::raw("plain"),
+        ]
+    );
+}
+
+#[test]
+fn render_rgb_sgr_color_is_retained_as_an_owned_span() {
+    let line = rendered(b"\x1b[38;2;12;34;56mRGB\x1b[0m", 20);
+    assert_eq!(
+        line.spans,
+        vec![Span::styled(
+            "RGB",
+            Style::default().fg(Color::Rgb(12, 34, 56)),
+        )]
+    );
+}
+
+#[test]
+fn render_sgr_bold_modifier_is_retained_without_escape_bytes() {
+    let line = rendered(b"\x1b[1mbold\x1b[0m", 20);
+    assert_eq!(
+        line.spans,
+        vec![Span::styled(
+            "bold",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]
+    );
+}
+
+#[test]
+fn render_exact_terminal_width_does_not_add_an_ellipsis() {
+    let line = rendered(b"exact", 5);
+    assert_eq!(rendered_text(&line), "exact");
+    assert_eq!(line.width(), 5);
+}
+
+#[test]
+fn render_recomputes_fit_from_the_same_output_after_width_changes() {
+    let output = b"resize";
+    assert_eq!(rendered_text(&rendered(output, 4)), "res…");
+    assert_eq!(rendered_text(&rendered(output, 6)), "resize");
+}
+
+#[test]
+fn render_result_owns_its_text_after_command_bytes_are_dropped() {
+    let line = {
+        let output = b"owned".to_vec();
+        rendered(&output, 5)
+    };
+    assert_eq!(rendered_text(&line), "owned");
+}
+
+#[test]
+fn render_width_one_uses_one_column_for_the_ellipsis() {
+    let line = rendered(b"long", 1);
+    assert_eq!(rendered_text(&line), "…");
+    assert_eq!(line.width(), 1);
+}
+
+#[test]
+fn render_truncation_preserves_leading_spaces_and_drops_trailing_overflow() {
+    let line = rendered(b"  abc  ", 5);
+    assert_eq!(rendered_text(&line), "  ab…");
+    assert_eq!(line.width(), 5);
+}
+
+#[test]
+fn render_cjk_cluster_uses_two_columns_and_is_never_split() {
+    let exact = rendered("界a".as_bytes(), 3);
+    assert_eq!(rendered_text(&exact), "界a");
+    assert_eq!(exact.width(), 3);
+    let narrow = rendered("界a".as_bytes(), 2);
+    assert_eq!(rendered_text(&narrow), "…");
+    assert_eq!(narrow.width(), 1);
+}
+
+#[test]
+fn render_powerline_glyph_remains_intact_at_a_column_boundary() {
+    let line = rendered("ab".as_bytes(), 2);
+    assert_eq!(rendered_text(&line), "…");
+    assert_eq!(line.width(), 2);
+}
+
+#[test]
+fn render_combining_accent_remains_attached_to_its_base_when_truncated() {
+    let line = rendered("e\u{301}ab".as_bytes(), 2);
+    assert_eq!(rendered_text(&line), "e\u{301}…");
+    assert_eq!(line.width(), 2);
+}
+
+#[test]
+fn render_skin_tone_emoji_is_one_unsplit_two_column_cluster() {
+    let line = rendered("👍🏽ab".as_bytes(), 3);
+    assert_eq!(rendered_text(&line), "👍🏽…");
+    assert_eq!(line.width(), 3);
+}
+
+#[test]
+fn render_zwj_family_emoji_is_one_unsplit_two_column_cluster() {
+    let line = rendered("👩‍👩‍👧‍👦ab".as_bytes(), 3);
+    assert_eq!(rendered_text(&line), "👩‍👩‍👧‍👦…");
+    assert_eq!(line.width(), 3);
+}
+
+#[test]
+fn render_regional_indicator_flag_is_one_unsplit_two_column_cluster() {
+    let line = rendered("🇺🇸ab".as_bytes(), 3);
+    assert_eq!(rendered_text(&line), "🇺🇸…");
+    assert_eq!(line.width(), 3);
+}
+
+#[test]
+fn render_style_boundary_inside_grapheme_uses_first_scalar_style() {
+    let line = rendered("\x1b[31me\x1b[34m\u{301}\x1b[0mx".as_bytes(), 2);
+    assert_eq!(rendered_text(&line), "e\u{301}x");
+    assert_eq!(line.width(), 2);
+    assert_eq!(
+        line.spans[0],
+        Span::styled("e\u{301}", Style::default().fg(Color::Red))
+    );
+    assert_eq!(line.spans[1], Span::raw("x"));
+
+    let narrow = rendered("\x1b[31me\x1b[34m\u{301}\x1b[0mxy".as_bytes(), 2);
+    assert_eq!(rendered_text(&narrow), "e\u{301}…");
+    assert_eq!(
+        narrow.spans[0],
+        Span::styled("e\u{301}", Style::default().fg(Color::Red))
+    );
 }

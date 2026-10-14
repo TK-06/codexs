@@ -373,6 +373,16 @@ impl StatusLineCommandResolution {
     }
 }
 
+/// Render owned command output for the status-line footer.
+/// The behavior is specified by the adjacent tests and implemented after hosted RED.
+#[allow(dead_code)]
+pub(crate) fn render_status_line_command_output(
+    _output: &[u8],
+    _width: usize,
+) -> Option<ratatui::text::Line<'static>> {
+    None
+}
+
 #[cfg(test)]
 #[path = "status_line_command_tests.rs"]
 mod tests;
