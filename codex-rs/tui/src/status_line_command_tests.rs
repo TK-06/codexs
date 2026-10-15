@@ -927,3 +927,608 @@ fn render_unterminated_escape_control_strings_discard_remaining_content() {
         assert_eq!(rendered_text(&line), "a");
     }
 }
+
+#[cfg(windows)]
+mod runner_tests {
+    use super::*;
+    use std::fs;
+    use std::io;
+    use std::path::Path;
+    use std::path::PathBuf;
+    use std::pin::Pin;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::time::Duration;
+    use tempfile::TempDir;
+    use tokio::io::AsyncRead;
+    use tokio::io::AsyncWrite;
+    use tokio::io::ReadBuf;
+    use tokio::sync::oneshot;
+    use tokio::task::JoinHandle;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+    use windows_sys::Win32::System::Threading::OpenProcess;
+    use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
+    use windows_sys::Win32::System::Threading::PROCESS_TERMINATE;
+    use windows_sys::Win32::System::Threading::TerminateProcess;
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    const WATCHDOG: Duration = Duration::from_secs(25);
+    const PROCESS_SYNCHRONIZE: u32 = 0x0010_0000;
+
+    struct Fixture {
+        directory: TempDir,
+        command: String,
+        identity_files: Vec<&'static str>,
+    }
+
+    impl Fixture {
+        fn new(script: &str) -> Self {
+            let directory = tempfile::tempdir().expect("temporary fixture directory");
+            let path = directory.path().join("status command with spaces.cmd");
+            assert!(
+                !script.contains('"'),
+                "fixture script must use single quotes"
+            );
+            fs::write(
+                &path,
+                format!(
+                    "@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"{script}\"\r\n"
+                ),
+            )
+            .expect("write synthetic command fixture");
+            Self {
+                directory,
+                command: format!("\"{}\"", path.display()),
+                identity_files: Vec::new(),
+            }
+        }
+
+        fn track_process(&mut self, identity_file: &'static str) {
+            self.identity_files.push(identity_file);
+        }
+
+        fn path(&self, name: &str) -> PathBuf {
+            self.directory.path().join(name)
+        }
+
+        fn request(
+            &self,
+            payload: serde_json::Value,
+            width: usize,
+            timeout_ms: u64,
+        ) -> StatusLineCommandRequest {
+            StatusLineCommandRequest {
+                config: StatusLineCommandConfig {
+                    command: self.command.clone(),
+                    refresh_interval_secs: 10,
+                    timeout_ms,
+                },
+                payload,
+                cwd: self.directory.path().to_path_buf(),
+                width,
+            }
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            // This runs after assertions and before TempDir removes identity files. A failed
+            // assertion cannot strand a process that published its verified identity but was
+            // not yet captured by wait_for_process. Never terminate an unverified/reused PID.
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            let mut processes = Vec::new();
+            for name in &self.identity_files {
+                let path = self.path(name);
+                loop {
+                    if let Some((pid, creation_ticks)) = read_identity(&path) {
+                        if let Some(process) = ExactProcess::try_capture(pid, creation_ticks) {
+                            processes.push(process);
+                        }
+                        break;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+            for process in processes.iter().rev() {
+                if unsafe { WaitForSingleObject(process.handle, 0) } == WAIT_TIMEOUT {
+                    unsafe { TerminateProcess(process.handle, 1) };
+                    if unsafe { WaitForSingleObject(process.handle, 2_000) } != WAIT_OBJECT_0 {
+                        eprintln!(
+                            "fixture cleanup could not stop verified process {}",
+                            process.pid
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn read_identity(path: &Path) -> Option<(u32, u64)> {
+        let text = fs::read_to_string(path).ok()?;
+        let (pid, creation_ticks) = text.trim().split_once(',')?;
+        Some((pid.parse().ok()?, creation_ticks.parse().ok()?))
+    }
+
+    fn ps_literal(path: &Path) -> String {
+        format!("'{}'", path.display().to_string().replace('\'', "''"))
+    }
+
+    fn tree_script(fixture: &Fixture, output: &str) -> String {
+        format!(
+            "$start = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToFileTimeUtc(); Set-Content -LiteralPath {} -Value ($PID.ToString() + ',' + $start.ToString()); $child = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30' -WindowStyle Hidden -PassThru; $childStart = (Get-Process -Id $child.Id).StartTime.ToUniversalTime().ToFileTimeUtc(); Set-Content -LiteralPath {} -Value ($child.Id.ToString() + ',' + $childStart.ToString()); while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 20 }}; [Console]::Out.Write('{}')",
+            ps_literal(&fixture.path("root.pid")),
+            ps_literal(&fixture.path("descendant.pid")),
+            ps_literal(&fixture.path("release")),
+            output,
+        )
+    }
+
+    fn launch(
+        request: StatusLineCommandRequest,
+    ) -> (
+        oneshot::Sender<()>,
+        JoinHandle<Result<Line<'static>, StatusLineCommandError>>,
+    ) {
+        let (cancel, cancelled) = oneshot::channel();
+        let task = tokio::spawn(run_status_line_command(request, cancelled));
+        (cancel, task)
+    }
+
+    async fn result(
+        task: JoinHandle<Result<Line<'static>, StatusLineCommandError>>,
+    ) -> Result<Line<'static>, StatusLineCommandError> {
+        tokio::time::timeout(WATCHDOG, task)
+            .await
+            .expect("runner watchdog expired")
+            .expect("runner task panicked")
+    }
+
+    struct ExactProcess {
+        handle: HANDLE,
+        pid: u32,
+    }
+
+    impl ExactProcess {
+        fn capture(pid: u32, expected_creation_ticks: u64) -> Self {
+            Self::try_capture(pid, expected_creation_ticks)
+                .unwrap_or_else(|| panic!("could not verify process identity for {pid}"))
+        }
+
+        fn try_capture(pid: u32, expected_creation_ticks: u64) -> Option<Self> {
+            let handle = unsafe {
+                OpenProcess(
+                    PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                    0,
+                    pid,
+                )
+            };
+            if handle.is_null() {
+                return None;
+            }
+            let mut created = FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            };
+            let mut exited = created;
+            let mut kernel = created;
+            let mut user = created;
+            let queried = unsafe {
+                GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user)
+            };
+            let actual_creation_ticks =
+                (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+            if queried == 0 || actual_creation_ticks != expected_creation_ticks {
+                unsafe { CloseHandle(handle) };
+                return None;
+            }
+            Some(Self { handle, pid })
+        }
+
+        fn assert_running(&self) {
+            assert_eq!(
+                unsafe { WaitForSingleObject(self.handle, 0) },
+                WAIT_TIMEOUT,
+                "process {} exited before test trigger",
+                self.pid
+            );
+        }
+
+        fn assert_gone(&self) {
+            assert_eq!(
+                unsafe { WaitForSingleObject(self.handle, 5_000) },
+                WAIT_OBJECT_0,
+                "exact process {} survived runner cleanup",
+                self.pid
+            );
+        }
+    }
+
+    impl Drop for ExactProcess {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.handle) };
+        }
+    }
+
+    async fn wait_for_process(
+        path: &Path,
+        task: &JoinHandle<Result<Line<'static>, StatusLineCommandError>>,
+    ) -> ExactProcess {
+        let deadline = tokio::time::Instant::now() + WATCHDOG;
+        loop {
+            if let Some((pid, creation_ticks)) = read_identity(path) {
+                return ExactProcess::capture(pid, creation_ticks);
+            }
+            assert!(
+                !task.is_finished(),
+                "runner ended before fixture recorded {}",
+                path.display()
+            );
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "fixture did not record {}",
+                path.display()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    async fn tree_fixture() -> (
+        Fixture,
+        oneshot::Sender<()>,
+        JoinHandle<Result<Line<'static>, StatusLineCommandError>>,
+        ExactProcess,
+        ExactProcess,
+    ) {
+        // The script is constructed after temp paths exist; replacing the initial script is
+        // limited to this generated fixture and never executes during scaffold preparation.
+        let mut fixture = Fixture::new("[Console]::Out.Write('initial')");
+        fixture.track_process("root.pid");
+        fixture.track_process("descendant.pid");
+        let script = tree_script(&fixture, "tree done");
+        let path = fixture.path("status command with spaces.cmd");
+        fs::write(
+            &path,
+            format!(
+                "@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"{script}\"\r\n"
+            ),
+        )
+        .expect("write tree fixture");
+        let (cancel, task) = launch(fixture.request(json!({"kind": "synthetic"}), 30, 10_000));
+        let root = wait_for_process(&fixture.path("root.pid"), &task).await;
+        let descendant = wait_for_process(&fixture.path("descendant.pid"), &task).await;
+        root.assert_running();
+        descendant.assert_running();
+        (fixture, cancel, task, root, descendant)
+    }
+
+    #[tokio::test]
+    async fn runner_writes_json_stdin_and_recomputes_width() {
+        let fixture = Fixture::new(
+            "[Console]::Out.Write($env:CCSTATUSLINE_WIDTH + '|' + [Console]::In.ReadToEnd())",
+        );
+        let payload = json!({"kind": "synthetic"});
+        let (_cancel, wide_task) = launch(fixture.request(payload.clone(), 80, 15_000));
+        let wide = result(wide_task)
+            .await
+            .expect("JSON fixture should succeed");
+        assert_eq!(
+            wide.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            format!("80|{payload}")
+        );
+        let (_cancel, narrow_task) = launch(fixture.request(payload, 6, 15_000));
+        let narrow = result(narrow_task)
+            .await
+            .expect("resized fixture should succeed");
+        assert_eq!(narrow.width(), 6);
+        assert!(narrow.spans[0].content.starts_with("6|"));
+        assert!(
+            narrow
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .ends_with('…')
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_accepts_quoted_command_path_with_spaces() {
+        let fixture = Fixture::new("[Console]::Out.Write('quoted ok')");
+        let (_cancel, task) = launch(fixture.request(json!({}), 20, 15_000));
+        let line = result(task).await.expect("quoted cmd path should execute");
+        assert_eq!(
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "quoted ok"
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_preserves_quoted_argument_path_with_spaces() {
+        let fixture = Fixture::new("[Console]::Out.Write('initial')");
+        let argument = fixture.path("quoted argument with spaces.txt");
+        fs::write(&argument, b"quoted argument ok").expect("write argument fixture");
+        fs::write(
+            fixture.path("status command with spaces.cmd"),
+            b"@echo off\r\ntype \"%~1\"\r\n",
+        )
+        .expect("write argument-reading command fixture");
+        let mut request = fixture.request(json!({}), 30, 15_000);
+        request.config.command = format!("{} \"{}\"", fixture.command, argument.display());
+        let (_cancel, task) = launch(request);
+        let line = result(task)
+            .await
+            .expect("quoted argument should reach cmd intact");
+        assert_eq!(
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "quoted argument ok"
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_uses_explicit_child_working_directory() {
+        let fixture = Fixture::new("[Console]::Out.Write((Get-Location).Path)");
+        let cwd = fixture.path("working directory distinct from executable");
+        fs::create_dir(&cwd).expect("create working directory fixture");
+        let mut request = fixture.request(json!({}), 4096, 15_000);
+        request.cwd = cwd.clone();
+        let (_cancel, task) = launch(request);
+        let line = result(task)
+            .await
+            .expect("working directory fixture should succeed");
+        let actual = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(actual.to_lowercase(), cwd.to_string_lossy().to_lowercase());
+    }
+
+    #[tokio::test]
+    async fn runner_accepts_success_and_retains_safe_color() {
+        let fixture = Fixture::new(
+            "[Console]::Out.Write(([char]27).ToString() + '[31mred' + ([char]27).ToString() + '[0m')",
+        );
+        let (_cancel, task) = launch(fixture.request(json!({}), 20, 15_000));
+        let line = result(task).await.expect("color fixture should succeed");
+        assert_eq!(
+            line.spans,
+            vec![Span::styled("red", Style::default().fg(Color::Red))]
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_missing_command_fails() {
+        let fixture = Fixture::new("[Console]::Out.Write('unused')");
+        let mut request = fixture.request(json!({}), 20, 15_000);
+        request.config.command = "codexs_definitely_missing_fixture_executable_4891".to_string();
+        let (_cancel, task) = launch(request);
+        assert!(matches!(
+            result(task).await,
+            Err(StatusLineCommandError::ExitFailure)
+        ));
+    }
+
+    #[tokio::test]
+    async fn runner_nonzero_exit_discards_visible_stdout() {
+        let fixture = Fixture::new("[Console]::Out.Write('must not render'); exit 7");
+        let (_cancel, task) = launch(fixture.request(json!({}), 20, 15_000));
+        assert!(matches!(
+            result(task).await,
+            Err(StatusLineCommandError::ExitFailure)
+        ));
+    }
+
+    #[tokio::test]
+    async fn runner_empty_output_fails() {
+        let fixture = Fixture::new("[Console]::Out.Write('   ')");
+        let (_cancel, task) = launch(fixture.request(json!({}), 20, 15_000));
+        assert!(matches!(
+            result(task).await,
+            Err(StatusLineCommandError::EmptyOutput)
+        ));
+    }
+
+    #[tokio::test]
+    async fn runner_rejects_blank_command_before_spawn() {
+        let fixture = Fixture::new("[Console]::Out.Write('unused')");
+        let mut request = fixture.request(json!({}), 20, 15_000);
+        request.config.command = "  ".to_string();
+        let (_cancel, task) = launch(request);
+        assert!(matches!(
+            result(task).await,
+            Err(StatusLineCommandError::InvalidCommand)
+        ));
+    }
+
+    #[tokio::test]
+    async fn runner_accepts_exact_stdout_cap_without_truncating_success() {
+        let fixture = Fixture::new("[Console]::Out.Write('x' * 65536)");
+        let (_cancel, task) = launch(fixture.request(json!({}), 8, 15_000));
+        let line = result(task).await.expect("exact cap should succeed");
+        assert_eq!(line.width(), 8);
+    }
+
+    #[tokio::test]
+    async fn runner_aborts_at_stdout_cap_without_pipe_deadlock() {
+        let mut fixture = Fixture::new("[Console]::Out.Write('initial')");
+        fixture.track_process("producer.pid");
+        let script = format!(
+            "$start = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToFileTimeUtc(); Set-Content -LiteralPath {} -Value ($PID.ToString() + ',' + $start.ToString()); while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 20 }}; while ($true) {{ [Console]::Out.Write('x' * 8192) }}",
+            ps_literal(&fixture.path("producer.pid")),
+            ps_literal(&fixture.path("release")),
+        );
+        fs::write(
+            fixture.path("status command with spaces.cmd"),
+            format!(
+                "@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"{script}\"\r\n"
+            ),
+        )
+        .expect("write capped producer fixture");
+        // A serial write-then-read runner blocks on stdin while the child blocks on stdout.
+        let payload = json!({"blob": "x".repeat(2 * 1024 * 1024)});
+        let (_cancel, task) = launch(fixture.request(payload, 8, 15_000));
+        let producer = wait_for_process(&fixture.path("producer.pid"), &task).await;
+        producer.assert_running();
+        fs::write(fixture.path("release"), b"go").expect("release capped producer");
+        assert!(matches!(
+            result(task).await,
+            Err(StatusLineCommandError::OutputCap)
+        ));
+        producer.assert_gone();
+    }
+
+    #[tokio::test]
+    async fn runner_reports_stdin_pipe_failure() {
+        let fixture = Fixture::new("[Console]::In.Close(); Start-Sleep -Milliseconds 100; exit 0");
+        let payload = json!({"blob": "x".repeat(2 * 1024 * 1024)});
+        let (_cancel, task) = launch(fixture.request(payload, 20, 15_000));
+        assert!(matches!(
+            result(task).await,
+            Err(StatusLineCommandError::StdinWrite)
+        ));
+    }
+
+    struct FailingReader;
+
+    impl AsyncRead for FailingReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            _: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Ready(Err(io::Error::other("synthetic read error")))
+        }
+    }
+
+    struct FailingWriter;
+
+    impl AsyncWrite for FailingWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            _: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Err(io::Error::other("synthetic write error")))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn runner_read_adapter_reports_stdout_error() {
+        assert!(matches!(
+            read_status_line_stdout(&mut FailingReader).await,
+            Err(StatusLineCommandError::StdoutRead)
+        ));
+    }
+
+    #[tokio::test]
+    async fn runner_write_adapter_reports_stdin_error() {
+        assert!(matches!(
+            write_status_line_stdin(&mut FailingWriter, b"synthetic").await,
+            Err(StatusLineCommandError::StdinWrite)
+        ));
+    }
+
+    #[test]
+    fn runner_wait_adapter_reports_wait_error() {
+        assert!(matches!(
+            classify_status_line_wait(Err(io::Error::other("synthetic wait error"))),
+            Err(StatusLineCommandError::Wait)
+        ));
+    }
+
+    #[tokio::test]
+    async fn runner_normal_completion_terminates_exact_descendant() {
+        let (fixture, _cancel, task, root, descendant) = tree_fixture().await;
+        fs::write(fixture.path("release"), b"go").expect("release fixture");
+        let line = result(task).await.expect("tree fixture should succeed");
+        assert_eq!(
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "tree done"
+        );
+        root.assert_gone();
+        descendant.assert_gone();
+    }
+
+    #[tokio::test]
+    async fn runner_timeout_terminates_exact_tree() {
+        let (_fixture, _cancel, task, root, descendant) = tree_fixture().await;
+        assert!(matches!(
+            result(task).await,
+            Err(StatusLineCommandError::Timeout)
+        ));
+        root.assert_gone();
+        descendant.assert_gone();
+    }
+
+    #[tokio::test]
+    async fn runner_explicit_cancel_terminates_exact_tree() {
+        let (_fixture, cancel, task, root, descendant) = tree_fixture().await;
+        cancel.send(()).expect("runner should still be listening");
+        assert!(matches!(
+            result(task).await,
+            Err(StatusLineCommandError::Cancelled)
+        ));
+        root.assert_gone();
+        descendant.assert_gone();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn runner_caller_abort_still_terminates_exact_tree() {
+        let (_fixture, _cancel, task, root, descendant) = tree_fixture().await;
+        task.abort();
+        let join = tokio::time::timeout(WATCHDOG, task)
+            .await
+            .expect("aborted task watchdog");
+        assert!(
+            join.expect_err("aborted caller should be cancelled")
+                .is_cancelled()
+        );
+        root.assert_gone();
+        descendant.assert_gone();
+    }
+
+    #[test]
+    fn runner_runtime_shutdown_terminates_exact_tree() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let (fixture, _cancel, task, root, descendant) = runtime.block_on(tree_fixture());
+        runtime.shutdown_timeout(Duration::from_secs(5));
+        assert!(
+            task.is_finished(),
+            "supervisor should have stopped on runtime shutdown"
+        );
+        root.assert_gone();
+        descendant.assert_gone();
+        drop(fixture);
+    }
+}

@@ -1,6 +1,7 @@
 //! Trusted TUI-only command configuration.
 
 use std::iter::Peekable;
+use std::path::PathBuf;
 use std::str::Chars;
 
 use codex_config::ConfigLayerSource;
@@ -634,6 +635,79 @@ pub(crate) fn render_status_line_command_output(
         }
     }
     render_visible_line(&line, width)
+}
+
+/// Owned inputs for one command launch. Task 5 will construct and cancel these requests.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct StatusLineCommandRequest {
+    pub(crate) config: StatusLineCommandConfig,
+    pub(crate) payload: Value,
+    pub(crate) cwd: PathBuf,
+    pub(crate) width: usize,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) enum StatusLineCommandError {
+    Unsupported,
+    InvalidCommand,
+    JobCreate,
+    Spawn,
+    JobAssign,
+    Resume,
+    StdinWrite,
+    StdoutRead,
+    OutputCap,
+    Wait,
+    Timeout,
+    Cancelled,
+    ExitFailure,
+    EmptyOutput,
+    Cleanup {
+        primary: Option<Box<Self>>,
+        terminate: Option<std::io::Error>,
+        reap: Option<std::io::Error>,
+        timed_out: bool,
+    },
+}
+
+/// Inert Task 4 scaffold. The contained Windows implementation follows hosted RED.
+#[allow(dead_code)]
+pub(crate) async fn run_status_line_command(
+    request: StatusLineCommandRequest,
+    cancellation: tokio::sync::oneshot::Receiver<()>,
+) -> Result<Line<'static>, StatusLineCommandError> {
+    let _ = (request, cancellation);
+    Err(StatusLineCommandError::Unsupported)
+}
+
+/// The implementation will share this narrow write path with deterministic fault tests.
+#[allow(dead_code)]
+async fn write_status_line_stdin<W: tokio::io::AsyncWrite + Unpin>(
+    writer: &mut W,
+    payload: &[u8],
+) -> Result<(), StatusLineCommandError> {
+    let _ = (writer, payload);
+    Err(StatusLineCommandError::Unsupported)
+}
+
+/// The implementation will share this narrow capped read path with fault tests.
+#[allow(dead_code)]
+async fn read_status_line_stdout<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+) -> Result<Vec<u8>, StatusLineCommandError> {
+    let _ = reader;
+    Err(StatusLineCommandError::Unsupported)
+}
+
+/// Keeps wait-error mapping narrow enough to exercise without a fake process type.
+#[allow(dead_code)]
+fn classify_status_line_wait(
+    status: std::io::Result<std::process::ExitStatus>,
+) -> Result<std::process::ExitStatus, StatusLineCommandError> {
+    let _ = status;
+    Err(StatusLineCommandError::Unsupported)
 }
 
 #[cfg(test)]
