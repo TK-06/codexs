@@ -1,11 +1,21 @@
 //! Trusted TUI-only command configuration.
 
+use std::iter::Peekable;
+use std::str::Chars;
+
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
+use ratatui::style::Color;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
+use ratatui::text::Line;
+use ratatui::text::Span;
 use serde::Deserialize;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::json;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 const MAX_SAFE_JSON_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -373,14 +383,257 @@ impl StatusLineCommandResolution {
     }
 }
 
-/// Render owned command output for the status-line footer.
-/// The behavior is specified by the adjacent tests and implemented after hosted RED.
+/// Only these SGR attributes are allowed into the footer. Other terminal controls
+/// are consumed without passing their bytes or contents to ratatui.
+#[derive(Default)]
+struct SafeSgr {
+    foreground: Option<Color>,
+    background: Option<Color>,
+    modifiers: Modifier,
+}
+
+impl SafeSgr {
+    fn style(&self) -> Style {
+        let mut style = Style::default();
+        if let Some(color) = self.foreground {
+            style = style.fg(color);
+        }
+        if let Some(color) = self.background {
+            style = style.bg(color);
+        }
+        if !self.modifiers.is_empty() {
+            style = style.add_modifier(self.modifiers);
+        }
+        style
+    }
+
+    fn apply(&mut self, parameters: &str) {
+        let values: Option<Vec<u16>> = if parameters.is_empty() {
+            Some(vec![0])
+        } else {
+            parameters
+                .split(';')
+                .map(|value| {
+                    if value.is_empty() {
+                        Some(0)
+                    } else {
+                        value.parse::<u16>().ok()
+                    }
+                })
+                .collect()
+        };
+        let Some(values) = values else {
+            return;
+        };
+
+        let mut index = 0;
+        while index < values.len() {
+            match values[index] {
+                0 => *self = Self::default(),
+                1 => self.modifiers.insert(Modifier::BOLD),
+                2 => self.modifiers.insert(Modifier::DIM),
+                3 => self.modifiers.insert(Modifier::ITALIC),
+                4 => self.modifiers.insert(Modifier::UNDERLINED),
+                7 => self.modifiers.insert(Modifier::REVERSED),
+                22 => self.modifiers.remove(Modifier::BOLD | Modifier::DIM),
+                23 => self.modifiers.remove(Modifier::ITALIC),
+                24 => self.modifiers.remove(Modifier::UNDERLINED),
+                27 => self.modifiers.remove(Modifier::REVERSED),
+                30..=37 => self.foreground = Some(ansi_color(values[index] - 30, false)),
+                39 => self.foreground = None,
+                40..=47 => self.background = Some(ansi_color(values[index] - 40, false)),
+                49 => self.background = None,
+                90..=97 => self.foreground = Some(ansi_color(values[index] - 90, true)),
+                100..=107 => self.background = Some(ansi_color(values[index] - 100, true)),
+                38 | 48 => {
+                    let (color, consumed) = extended_ansi_color(&values[index..]);
+                    if let Some(color) = color {
+                        if values[index] == 38 {
+                            self.foreground = Some(color);
+                        } else {
+                            self.background = Some(color);
+                        }
+                    }
+                    index += consumed;
+                    continue;
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+}
+
+fn ansi_color(index: u16, bright: bool) -> Color {
+    match (index, bright) {
+        (0, false) => Color::Black,
+        (1, false) => Color::Red,
+        (2, false) => Color::Green,
+        (3, false) => Color::Yellow,
+        (4, false) => Color::Blue,
+        (5, false) => Color::Magenta,
+        (6, false) => Color::Cyan,
+        (7, false) => Color::Gray,
+        (0, true) => Color::DarkGray,
+        (1, true) => Color::LightRed,
+        (2, true) => Color::LightGreen,
+        (3, true) => Color::LightYellow,
+        (4, true) => Color::LightBlue,
+        (5, true) => Color::LightMagenta,
+        (6, true) => Color::LightCyan,
+        _ => Color::White,
+    }
+}
+
+fn extended_ansi_color(values: &[u16]) -> (Option<Color>, usize) {
+    match values {
+        [_, 5, value, ..] => (u8::try_from(*value).ok().map(Color::Indexed), 3),
+        [_, 2, red, green, blue, ..] => (
+            u8::try_from(*red)
+                .ok()
+                .zip(u8::try_from(*green).ok())
+                .zip(u8::try_from(*blue).ok())
+                .map(|((red, green), blue)| Color::Rgb(red, green, blue)),
+            5,
+        ),
+        _ => (None, values.len()),
+    }
+}
+
+fn consume_csi(chars: &mut Peekable<Chars<'_>>) -> Option<String> {
+    let mut parameters = String::new();
+    let mut valid_sgr = true;
+    for character in chars.by_ref() {
+        if ('@'..='~').contains(&character) {
+            return (character == 'm' && valid_sgr).then_some(parameters);
+        }
+        if (character.is_ascii_digit() || character == ';') && parameters.len() < 128 {
+            parameters.push(character);
+        } else {
+            valid_sgr = false;
+        }
+    }
+    None
+}
+
+fn consume_control_string(chars: &mut Peekable<Chars<'_>>, osc: bool) {
+    while let Some(character) = chars.next() {
+        if character == '\u{009c}' || (osc && character == '\x07') {
+            break;
+        }
+        if character == '\x1b' && chars.peek() == Some(&'\\') {
+            chars.next();
+            break;
+        }
+    }
+}
+
+fn consume_escape(chars: &mut Peekable<Chars<'_>>, sgr: &mut SafeSgr) {
+    match chars.next() {
+        Some('[') => {
+            if let Some(parameters) = consume_csi(chars) {
+                sgr.apply(&parameters);
+            }
+        }
+        Some(']') => consume_control_string(chars, true),
+        Some('P' | '_' | '^' | 'X') => consume_control_string(chars, false),
+        Some(intermediate) if (' '..='/').contains(&intermediate) => {
+            for character in chars.by_ref() {
+                if ('0'..='~').contains(&character) {
+                    break;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn append_grapheme(spans: &mut Vec<Span<'static>>, grapheme: &str, style: Style) {
+    if let Some(last) = spans.last_mut()
+        && last.style == style
+    {
+        last.content.to_mut().push_str(grapheme);
+    } else {
+        spans.push(Span::styled(grapheme.to_owned(), style));
+    }
+}
+
+fn render_visible_line(characters: &[(char, Style)], width: usize) -> Option<Line<'static>> {
+    let text: String = characters.iter().map(|(character, _)| *character).collect();
+    if text.trim().is_empty() || UnicodeWidthStr::width(text.as_str()) == 0 {
+        return None;
+    }
+
+    // Grapheme segmentation runs over the whole visible line, across SGR
+    // boundaries. The first scalar's style owns any spanning cluster.
+    let mut scalar_styles = characters.iter().map(|(_, style)| *style);
+    let graphemes: Vec<(&str, Style, usize)> = text
+        .graphemes(true)
+        .map(|grapheme| {
+            let style = scalar_styles.next().unwrap_or_default();
+            for _ in 1..grapheme.chars().count() {
+                scalar_styles.next();
+            }
+            (grapheme, style, UnicodeWidthStr::width(grapheme))
+        })
+        .collect();
+    let full_width = graphemes.iter().fold(0usize, |used, (_, _, columns)| {
+        used.saturating_add(*columns)
+    });
+    let truncated = full_width > width;
+    let budget = if truncated { width - 1 } else { width };
+    let mut used = 0usize;
+    let mut spans = Vec::new();
+    for (grapheme, style, columns) in graphemes {
+        if used.saturating_add(columns) > budget {
+            break;
+        }
+        used += columns;
+        append_grapheme(&mut spans, grapheme, style);
+    }
+    if truncated {
+        append_grapheme(&mut spans, "…", Style::default());
+    }
+    Some(Line::from(spans))
+}
+
+/// Retain the first nonblank visible line of trusted command output, allowing
+/// only safe SGR styling and fitting whole graphemes into the footer width.
 #[allow(dead_code)]
 pub(crate) fn render_status_line_command_output(
-    _output: &[u8],
-    _width: usize,
-) -> Option<ratatui::text::Line<'static>> {
-    None
+    output: &[u8],
+    width: usize,
+) -> Option<Line<'static>> {
+    if width == 0 {
+        return None;
+    }
+    let output = std::str::from_utf8(output).ok()?;
+    let mut chars = output.chars().peekable();
+    let mut sgr = SafeSgr::default();
+    let mut line = Vec::new();
+    while let Some(character) = chars.next() {
+        match character {
+            '\r' | '\n' => {
+                if let Some(rendered) = render_visible_line(&line, width) {
+                    return Some(rendered);
+                }
+                line.clear();
+            }
+            '\x1b' => consume_escape(&mut chars, &mut sgr),
+            '\u{009b}' => {
+                if let Some(parameters) = consume_csi(&mut chars) {
+                    sgr.apply(&parameters);
+                }
+            }
+            '\u{009d}' => consume_control_string(&mut chars, true),
+            '\u{0090}' | '\u{0098}' | '\u{009e}' | '\u{009f}' => {
+                consume_control_string(&mut chars, false);
+            }
+            character if character.is_control() => {}
+            character => line.push((character, sgr.style())),
+        }
+    }
+    render_visible_line(&line, width)
 }
 
 #[cfg(test)]
