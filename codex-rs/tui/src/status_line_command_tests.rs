@@ -711,7 +711,7 @@ fn render_invalid_utf8_rejects_the_output_without_replacement_text() {
 
 #[test]
 fn render_c0_c1_and_delete_controls_cannot_reach_footer_text() {
-    let line = rendered(b"a\x00\x01\x7f\xc2\x80\xc2\x9fb", 20);
+    let line = rendered(b"a\x00\x01\x7f\xc2\x80\xc2\x91b", 20);
     assert_eq!(rendered_text(&line), "ab");
 }
 
@@ -905,4 +905,25 @@ fn render_style_boundary_inside_grapheme_uses_first_scalar_style() {
         narrow.spans[0],
         Span::styled("e\u{301}", Style::default().fg(Color::Red))
     );
+}
+
+#[test]
+fn render_c1_apc_discards_terminated_content_including_newlines() {
+    let line = rendered("a\u{009f}hidden\ncontent\u{009c}b".as_bytes(), 20);
+    assert_eq!(rendered_text(&line), "ab");
+}
+
+#[test]
+fn render_unterminated_c1_apc_discards_the_remaining_content() {
+    let line = rendered("a\u{009f}secret".as_bytes(), 20);
+    assert_eq!(rendered_text(&line), "a");
+}
+
+#[test]
+fn render_unterminated_escape_control_strings_discard_remaining_content() {
+    for opener in ["\x1b]0;", "\x1bP", "\x1b_", "\x1b^"] {
+        let output = format!("a{opener}hidden\ncontent");
+        let line = rendered(output.as_bytes(), 20);
+        assert_eq!(rendered_text(&line), "a");
+    }
 }
