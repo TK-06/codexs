@@ -672,14 +672,121 @@ pub(crate) enum StatusLineCommandError {
     },
 }
 
+/// Native operations used by the future Windows owner. Keeping these operations on
+/// the runner path lets tests fail one real launch or cleanup step at a time.
+#[cfg(windows)]
+#[allow(dead_code)]
+trait WindowsNativeOps: Send + Sync {
+    fn create_job(&self) -> std::io::Result<std::os::windows::io::OwnedHandle>;
+    fn spawn(
+        &self,
+        command: &mut tokio::process::Command,
+    ) -> std::io::Result<tokio::process::Child>;
+    fn assign(
+        &self,
+        job: &std::os::windows::io::OwnedHandle,
+        process: std::os::windows::io::RawHandle,
+    ) -> std::io::Result<()>;
+    fn resume(&self, process: std::os::windows::io::RawHandle) -> std::io::Result<()>;
+    fn terminate(&self, job: &std::os::windows::io::OwnedHandle) -> std::io::Result<()>;
+    fn wait<'a>(
+        &'a self,
+        child: &'a mut tokio::process::Child,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = std::io::Result<std::process::ExitStatus>> + Send + 'a,
+        >,
+    >;
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+struct DefaultWindowsNativeOps;
+
+#[cfg(windows)]
+impl WindowsNativeOps for DefaultWindowsNativeOps {
+    fn create_job(&self) -> std::io::Result<std::os::windows::io::OwnedHandle> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "native runner pending",
+        ))
+    }
+
+    fn spawn(&self, _: &mut tokio::process::Command) -> std::io::Result<tokio::process::Child> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "native runner pending",
+        ))
+    }
+
+    fn assign(
+        &self,
+        _: &std::os::windows::io::OwnedHandle,
+        _: std::os::windows::io::RawHandle,
+    ) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "native runner pending",
+        ))
+    }
+
+    fn resume(&self, _: std::os::windows::io::RawHandle) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "native runner pending",
+        ))
+    }
+
+    fn terminate(&self, _: &std::os::windows::io::OwnedHandle) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "native runner pending",
+        ))
+    }
+
+    fn wait<'a>(
+        &'a self,
+        _: &'a mut tokio::process::Child,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = std::io::Result<std::process::ExitStatus>> + Send + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "native runner pending",
+            ))
+        })
+    }
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+async fn run_status_line_command_with_ops<O: WindowsNativeOps>(
+    request: StatusLineCommandRequest,
+    cancellation: tokio::sync::oneshot::Receiver<()>,
+    ops: O,
+) -> Result<Line<'static>, StatusLineCommandError> {
+    let _ = (request, cancellation, ops);
+    Err(StatusLineCommandError::Unsupported)
+}
+
 /// Inert Task 4 scaffold. The contained Windows implementation follows hosted RED.
 #[allow(dead_code)]
 pub(crate) async fn run_status_line_command(
     request: StatusLineCommandRequest,
     cancellation: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<Line<'static>, StatusLineCommandError> {
-    let _ = (request, cancellation);
-    Err(StatusLineCommandError::Unsupported)
+    #[cfg(windows)]
+    {
+        run_status_line_command_with_ops(request, cancellation, DefaultWindowsNativeOps).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (request, cancellation);
+        Err(StatusLineCommandError::Unsupported)
+    }
 }
 
 /// The implementation will share this narrow write path with deterministic fault tests.

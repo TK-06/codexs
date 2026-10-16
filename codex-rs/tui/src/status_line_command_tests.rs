@@ -1531,4 +1531,480 @@ mod runner_tests {
         descendant.assert_gone();
         drop(fixture);
     }
+
+    mod native_fault_tests {
+        use super::*;
+        use std::future::Future;
+        use std::os::windows::io::AsRawHandle;
+        use std::os::windows::io::FromRawHandle;
+        use std::os::windows::io::OwnedHandle;
+        use std::os::windows::io::RawHandle;
+        use std::sync::Arc;
+        use std::sync::Mutex;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::atomic::Ordering;
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+        use windows_sys::Win32::System::JobObjects::CreateJobObjectW;
+        use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        use windows_sys::Win32::System::JobObjects::JOBOBJECT_EXTENDED_LIMIT_INFORMATION;
+        use windows_sys::Win32::System::JobObjects::JobObjectExtendedLimitInformation;
+        use windows_sys::Win32::System::JobObjects::SetInformationJobObject;
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+        use windows_sys::Win32::System::Threading::GetProcessId;
+
+        #[link(name = "ntdll")]
+        unsafe extern "system" {
+            fn NtResumeProcess(process: HANDLE) -> i32;
+        }
+
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Fault {
+            Create,
+            Assign,
+            Resume,
+            TerminateBefore,
+            TerminateAfter,
+            ReapAfter,
+        }
+
+        struct RecordedProcess {
+            handle: OwnedHandle,
+            pid: u32,
+            creation_ticks: u64,
+        }
+
+        impl RecordedProcess {
+            fn capture(process: RawHandle) -> io::Result<Self> {
+                let pid = unsafe { GetProcessId(process.cast()) };
+                if pid == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                let expected_creation_ticks = Self::creation_ticks(process)?;
+                let handle = unsafe {
+                    OpenProcess(
+                        PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                        0,
+                        pid,
+                    )
+                };
+                if handle.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let handle = unsafe { OwnedHandle::from_raw_handle(handle.cast()) };
+                let creation_ticks = Self::creation_ticks(handle.as_raw_handle())?;
+                if creation_ticks != expected_creation_ticks {
+                    return Err(io::Error::other(
+                        "process identity changed while opening handle",
+                    ));
+                }
+                Ok(Self {
+                    handle,
+                    pid,
+                    creation_ticks,
+                })
+            }
+
+            fn creation_ticks(handle: RawHandle) -> io::Result<u64> {
+                let mut created = FILETIME {
+                    dwLowDateTime: 0,
+                    dwHighDateTime: 0,
+                };
+                let mut exited = created;
+                let mut kernel = created;
+                let mut user = created;
+                if unsafe {
+                    GetProcessTimes(
+                        handle.cast(),
+                        &mut created,
+                        &mut exited,
+                        &mut kernel,
+                        &mut user,
+                    )
+                } == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+            }
+
+            fn assert_gone(&self) {
+                assert_eq!(
+                    unsafe { WaitForSingleObject(self.handle.as_raw_handle().cast(), 5_000) },
+                    WAIT_OBJECT_0,
+                    "recorded process {} ({}) survived cleanup",
+                    self.pid,
+                    self.creation_ticks
+                );
+            }
+        }
+
+        impl Drop for RecordedProcess {
+            fn drop(&mut self) {
+                if unsafe { WaitForSingleObject(self.handle.as_raw_handle().cast(), 0) }
+                    == WAIT_TIMEOUT
+                {
+                    unsafe { TerminateProcess(self.handle.as_raw_handle().cast(), 1) };
+                    let _ =
+                        unsafe { WaitForSingleObject(self.handle.as_raw_handle().cast(), 2_000) };
+                }
+            }
+        }
+
+        #[derive(Default)]
+        struct Observed {
+            process: Mutex<Option<RecordedProcess>>,
+            waited: AtomicBool,
+        }
+
+        impl Observed {
+            fn assert_reaped(&self) {
+                assert!(
+                    self.waited.load(Ordering::SeqCst),
+                    "actual Child.wait was not completed"
+                );
+                self.process
+                    .lock()
+                    .expect("observed process lock")
+                    .as_ref()
+                    .expect("native operations never received suspended process")
+                    .assert_gone();
+            }
+        }
+
+        struct FaultOps {
+            fault: Fault,
+            observed: Arc<Observed>,
+        }
+
+        impl FaultOps {
+            fn injected(&self, step: &str) -> io::Error {
+                io::Error::other(format!("injected {step} failure"))
+            }
+
+            fn stop_unrecorded_child(child: &mut tokio::process::Child) {
+                let _ = child.start_kill();
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) => return,
+                        Ok(None) if std::time::Instant::now() < deadline => {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        result => {
+                            eprintln!(
+                                "could not reap child after identity capture failed: {result:?}"
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        impl WindowsNativeOps for FaultOps {
+            fn create_job(&self) -> io::Result<OwnedHandle> {
+                if self.fault == Fault::Create {
+                    return Err(self.injected("job create"));
+                }
+                let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+                if handle.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let job = unsafe { OwnedHandle::from_raw_handle(handle.cast()) };
+                let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                    unsafe { std::mem::zeroed() };
+                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                if unsafe {
+                    SetInformationJobObject(
+                        job.as_raw_handle().cast(),
+                        JobObjectExtendedLimitInformation,
+                        (&raw const limits).cast(),
+                        std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                    )
+                } == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(job)
+            }
+
+            fn spawn(
+                &self,
+                command: &mut tokio::process::Command,
+            ) -> io::Result<tokio::process::Child> {
+                command.kill_on_drop(true);
+                let mut child = command.spawn()?;
+                let captured = child
+                    .raw_handle()
+                    .ok_or_else(|| io::Error::other("spawned child lacks a process handle"))
+                    .and_then(RecordedProcess::capture);
+                let captured = match captured {
+                    Ok(captured) => captured,
+                    Err(error) => {
+                        Self::stop_unrecorded_child(&mut child);
+                        return Err(error);
+                    }
+                };
+                let mut slot = self.observed.process.lock().expect("observed process lock");
+                if slot.is_some() {
+                    drop(slot);
+                    Self::stop_unrecorded_child(&mut child);
+                    return Err(io::Error::other("native wrapper saw a second spawn"));
+                }
+                *slot = Some(captured);
+                Ok(child)
+            }
+
+            fn assign(&self, job: &OwnedHandle, process: RawHandle) -> io::Result<()> {
+                let pid = unsafe { GetProcessId(process.cast()) };
+                let creation_ticks = RecordedProcess::creation_ticks(process)?;
+                let slot = self.observed.process.lock().expect("observed process lock");
+                let spawned = slot
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("assign preceded spawn"))?;
+                if pid != spawned.pid || creation_ticks != spawned.creation_ticks {
+                    return Err(io::Error::other("assign targeted a different child"));
+                }
+                drop(slot);
+                if self.fault == Fault::Assign {
+                    return Err(self.injected("job assignment"));
+                }
+                if unsafe { AssignProcessToJobObject(job.as_raw_handle().cast(), process.cast()) }
+                    == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            }
+
+            fn resume(&self, process: RawHandle) -> io::Result<()> {
+                if self.fault == Fault::Resume {
+                    return Err(self.injected("resume"));
+                }
+                let status = unsafe { NtResumeProcess(process.cast()) };
+                if status < 0 {
+                    return Err(io::Error::other(format!(
+                        "NtResumeProcess status {status:#x}"
+                    )));
+                }
+                Ok(())
+            }
+
+            fn terminate(&self, job: &OwnedHandle) -> io::Result<()> {
+                if self.fault == Fault::TerminateBefore {
+                    return Err(self.injected("terminate before call"));
+                }
+                if unsafe { TerminateJobObject(job.as_raw_handle().cast(), 1) } == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if self.fault == Fault::TerminateAfter {
+                    return Err(self.injected("terminate after call"));
+                }
+                Ok(())
+            }
+
+            fn wait<'a>(
+                &'a self,
+                child: &'a mut tokio::process::Child,
+            ) -> Pin<Box<dyn Future<Output = io::Result<std::process::ExitStatus>> + Send + 'a>>
+            {
+                Box::pin(async move {
+                    let status = child.wait().await?;
+                    self.observed.waited.store(true, Ordering::SeqCst);
+                    if self.fault == Fault::ReapAfter {
+                        Err(self.injected("post-reap"))
+                    } else {
+                        Ok(status)
+                    }
+                })
+            }
+        }
+
+        fn launch_fault(
+            request: StatusLineCommandRequest,
+            fault: Fault,
+        ) -> (
+            oneshot::Sender<()>,
+            JoinHandle<Result<Line<'static>, StatusLineCommandError>>,
+            Arc<Observed>,
+        ) {
+            let observed = Arc::new(Observed::default());
+            let (cancel, cancelled) = oneshot::channel();
+            let ops = FaultOps {
+                fault,
+                observed: Arc::clone(&observed),
+            };
+            let task = tokio::spawn(run_status_line_command_with_ops(request, cancelled, ops));
+            (cancel, task, observed)
+        }
+
+        fn assert_no_marker(fixture: &Fixture) {
+            assert!(
+                !fixture.path("ran.marker").exists(),
+                "suspended fixture executed before containment"
+            );
+        }
+
+        #[tokio::test]
+        async fn native_job_create_error_prevents_fixture_launch() {
+            let fixture = Fixture::new("Set-Content -LiteralPath 'ran.marker' -Value ran");
+            let (_cancel, task, observed) =
+                launch_fault(fixture.request(json!({}), 20, 15_000), Fault::Create);
+            assert!(matches!(
+                result(task).await,
+                Err(StatusLineCommandError::JobCreate)
+            ));
+            assert_no_marker(&fixture);
+            assert!(
+                observed
+                    .process
+                    .lock()
+                    .expect("observed process lock")
+                    .is_none()
+            );
+        }
+
+        #[tokio::test]
+        async fn native_job_assignment_error_reaps_suspended_root_without_executing_it() {
+            let fixture = Fixture::new("Set-Content -LiteralPath 'ran.marker' -Value ran");
+            let (_cancel, task, observed) =
+                launch_fault(fixture.request(json!({}), 20, 15_000), Fault::Assign);
+            assert!(matches!(
+                result(task).await,
+                Err(StatusLineCommandError::JobAssign)
+            ));
+            observed.assert_reaped();
+            assert_no_marker(&fixture);
+        }
+
+        #[tokio::test]
+        async fn native_resume_error_reaps_suspended_root_without_executing_it() {
+            let fixture = Fixture::new("Set-Content -LiteralPath 'ran.marker' -Value ran");
+            let (_cancel, task, observed) =
+                launch_fault(fixture.request(json!({}), 20, 15_000), Fault::Resume);
+            assert!(matches!(
+                result(task).await,
+                Err(StatusLineCommandError::Resume)
+            ));
+            observed.assert_reaped();
+            assert_no_marker(&fixture);
+        }
+
+        async fn cancel_fault_tree(
+            fault: Fault,
+        ) -> (
+            Fixture,
+            StatusLineCommandError,
+            Arc<Observed>,
+            ExactProcess,
+            ExactProcess,
+        ) {
+            let mut fixture = Fixture::new("[Console]::Out.Write('initial')");
+            fixture.track_process("root.pid");
+            fixture.track_process("descendant.pid");
+            let script = tree_script(&fixture, "unreachable");
+            fs::write(
+                fixture.path("status command with spaces.cmd"),
+                format!("@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"{script}\"\r\n"),
+            ).expect("write native fault fixture");
+            let (cancel, task, observed) =
+                launch_fault(fixture.request(json!({}), 20, 10_000), fault);
+            let root = wait_for_process(&fixture.path("root.pid"), &task).await;
+            let descendant = wait_for_process(&fixture.path("descendant.pid"), &task).await;
+            root.assert_running();
+            descendant.assert_running();
+            cancel.send(()).expect("runner should still be listening");
+            let error = result(task)
+                .await
+                .expect_err("cancellation with cleanup fault should fail");
+            (fixture, error, observed, root, descendant)
+        }
+
+        #[tokio::test]
+        async fn native_terminate_error_after_actual_termination_preserves_cancel_primary() {
+            let (_fixture, error, observed, root, descendant) =
+                cancel_fault_tree(Fault::TerminateAfter).await;
+            assert!(
+                matches!(error, StatusLineCommandError::Cleanup { primary: Some(primary), terminate: Some(_), reap: None, timed_out: false } if matches!(*primary, StatusLineCommandError::Cancelled))
+            );
+            observed.assert_reaped();
+            root.assert_gone();
+            descendant.assert_gone();
+        }
+
+        #[tokio::test]
+        async fn native_terminate_error_before_call_uses_fallback_and_preserves_cancel_primary() {
+            let (_fixture, error, observed, root, descendant) =
+                cancel_fault_tree(Fault::TerminateBefore).await;
+            assert!(
+                matches!(error, StatusLineCommandError::Cleanup { primary: Some(primary), terminate: Some(_), reap: None, timed_out: false } if matches!(*primary, StatusLineCommandError::Cancelled))
+            );
+            observed.assert_reaped();
+            root.assert_gone();
+            descendant.assert_gone();
+        }
+
+        #[tokio::test]
+        async fn native_post_reap_error_preserves_cancel_primary_and_exact_tree_cleanup() {
+            let (_fixture, error, observed, root, descendant) =
+                cancel_fault_tree(Fault::ReapAfter).await;
+            assert!(
+                matches!(error, StatusLineCommandError::Cleanup { primary: Some(primary), terminate: None, reap: Some(_), timed_out: false } if matches!(*primary, StatusLineCommandError::Cancelled))
+            );
+            observed.assert_reaped();
+            root.assert_gone();
+            descendant.assert_gone();
+        }
+
+        #[tokio::test]
+        async fn runner_captures_inherited_descendant_stdout_then_closes_tree_after_root_exit() {
+            let mut fixture = Fixture::new("[Console]::Out.Write('unused')");
+            fixture.track_process("root.pid");
+            fixture.track_process("descendant.pid");
+            let child_script = format!(
+                "$start = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToFileTimeUtc(); Set-Content -LiteralPath {} -Value ($PID.ToString() + ',' + $start.ToString()); [Console]::Out.Write('inherited marker'); [Console]::Out.Flush(); Set-Content -LiteralPath {} -Value ready; while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 20 }}",
+                ps_literal(&fixture.path("descendant.pid")),
+                ps_literal(&fixture.path("child.ready")),
+                ps_literal(&fixture.path("child.hold")),
+            );
+            let encoded_child = format!("'{}'", child_script.replace('\'', "''"));
+            let script = format!(
+                "$start = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToFileTimeUtc(); Set-Content -LiteralPath {} -Value ($PID.ToString() + ',' + $start.ToString()); $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes({encoded_child})); $info = New-Object System.Diagnostics.ProcessStartInfo; $info.FileName = 'powershell.exe'; $info.Arguments = '-NoProfile -NonInteractive -EncodedCommand ' + $encoded; $info.UseShellExecute = $false; $info.CreateNoWindow = $true; $info.RedirectStandardOutput = $false; $info.RedirectStandardError = $false; $child = [System.Diagnostics.Process]::Start($info); while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 20 }}; while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 20 }}",
+                ps_literal(&fixture.path("root.pid")),
+                ps_literal(&fixture.path("child.ready")),
+                ps_literal(&fixture.path("root.release")),
+            );
+            fs::write(
+                fixture.path("status command with spaces.cmd"),
+                format!("@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"{script}\"\r\n"),
+            ).expect("write inherited stdout fixture");
+            let (_cancel, task) = launch(fixture.request(json!({}), 30, 15_000));
+            let root = wait_for_process(&fixture.path("root.pid"), &task).await;
+            let descendant = wait_for_process(&fixture.path("descendant.pid"), &task).await;
+            let ready_deadline = tokio::time::Instant::now() + WATCHDOG;
+            while !fixture.path("child.ready").exists() {
+                assert!(
+                    !task.is_finished(),
+                    "runner exited before descendant flushed stdout"
+                );
+                assert!(
+                    tokio::time::Instant::now() < ready_deadline,
+                    "descendant did not flush stdout"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            descendant.assert_running();
+            fs::write(fixture.path("root.release"), b"go").expect("release root");
+            let line = result(task).await.expect("inherited stdout should succeed");
+            assert_eq!(
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>(),
+                "inherited marker"
+            );
+            root.assert_gone();
+            descendant.assert_gone();
+        }
+    }
 }
