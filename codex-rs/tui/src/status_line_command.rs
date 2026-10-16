@@ -706,73 +706,531 @@ struct DefaultWindowsNativeOps;
 #[cfg(windows)]
 impl WindowsNativeOps for DefaultWindowsNativeOps {
     fn create_job(&self) -> std::io::Result<std::os::windows::io::OwnedHandle> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "native runner pending",
-        ))
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::System::JobObjects::CreateJobObjectW;
+        use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        use windows_sys::Win32::System::JobObjects::JOBOBJECT_EXTENDED_LIMIT_INFORMATION;
+        use windows_sys::Win32::System::JobObjects::JobObjectExtendedLimitInformation;
+        use windows_sys::Win32::System::JobObjects::SetInformationJobObject;
+
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if handle.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let job = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle.cast()) };
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                (&raw const limits).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if configured == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(job)
     }
 
-    fn spawn(&self, _: &mut tokio::process::Command) -> std::io::Result<tokio::process::Child> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "native runner pending",
-        ))
+    fn spawn(
+        &self,
+        command: &mut tokio::process::Command,
+    ) -> std::io::Result<tokio::process::Child> {
+        command.spawn()
     }
 
     fn assign(
         &self,
-        _: &std::os::windows::io::OwnedHandle,
-        _: std::os::windows::io::RawHandle,
+        job: &std::os::windows::io::OwnedHandle,
+        process: std::os::windows::io::RawHandle,
     ) -> std::io::Result<()> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "native runner pending",
-        ))
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+        if unsafe { AssignProcessToJobObject(job.as_raw_handle().cast(), process.cast()) } == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 
-    fn resume(&self, _: std::os::windows::io::RawHandle) -> std::io::Result<()> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "native runner pending",
-        ))
+    fn resume(&self, process: std::os::windows::io::RawHandle) -> std::io::Result<()> {
+        #[link(name = "ntdll")]
+        unsafe extern "system" {
+            fn NtResumeProcess(process: windows_sys::Win32::Foundation::HANDLE) -> i32;
+        }
+        let status = unsafe { NtResumeProcess(process.cast()) };
+        if status < 0 {
+            Err(std::io::Error::other(format!(
+                "NtResumeProcess status {status:#x}"
+            )))
+        } else {
+            Ok(())
+        }
     }
 
-    fn terminate(&self, _: &std::os::windows::io::OwnedHandle) -> std::io::Result<()> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "native runner pending",
-        ))
+    fn terminate(&self, job: &std::os::windows::io::OwnedHandle) -> std::io::Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+        if unsafe { TerminateJobObject(job.as_raw_handle().cast(), 1) } == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 
     fn wait<'a>(
         &'a self,
-        _: &'a mut tokio::process::Child,
+        child: &'a mut tokio::process::Child,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = std::io::Result<std::process::ExitStatus>> + Send + 'a,
         >,
     > {
-        Box::pin(async {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "native runner pending",
-            ))
-        })
+        Box::pin(child.wait())
     }
 }
 
 #[cfg(windows)]
 #[allow(dead_code)]
-async fn run_status_line_command_with_ops<O: WindowsNativeOps>(
+struct WindowsCommandOwner<O: WindowsNativeOps> {
+    ops: O,
+    job: Option<std::os::windows::io::OwnedHandle>,
+    child: Option<tokio::process::Child>,
+    assigned: bool,
+    reaped: bool,
+    termination_attempted: bool,
+    terminate_error: Option<std::io::Error>,
+}
+
+#[cfg(windows)]
+impl<O: WindowsNativeOps> WindowsCommandOwner<O> {
+    fn append_error(slot: &mut Option<std::io::Error>, error: std::io::Error) {
+        *slot = Some(match slot.take() {
+            Some(previous) => std::io::Error::other(format!("{previous}; {error}")),
+            None => error,
+        });
+    }
+
+    fn kill_root(&mut self) {
+        if let Some(child) = self.child.as_mut()
+            && let Err(kill_error) = child.start_kill()
+        {
+            match child.try_wait() {
+                Ok(Some(_)) => {}
+                Ok(None) => Self::append_error(&mut self.terminate_error, kill_error),
+                Err(wait_error) => {
+                    Self::append_error(&mut self.terminate_error, kill_error);
+                    Self::append_error(&mut self.terminate_error, wait_error);
+                }
+            }
+        }
+    }
+
+    fn new(ops: O, job: std::os::windows::io::OwnedHandle) -> Self {
+        Self {
+            ops,
+            job: Some(job),
+            child: None,
+            assigned: false,
+            reaped: false,
+            termination_attempted: false,
+            terminate_error: None,
+        }
+    }
+
+    fn launch(
+        &mut self,
+        command: &mut tokio::process::Command,
+    ) -> Result<(), StatusLineCommandError> {
+        let child = self
+            .ops
+            .spawn(command)
+            .map_err(|_| StatusLineCommandError::Spawn)?;
+        self.child = Some(child);
+        let process = self
+            .child
+            .as_ref()
+            .and_then(tokio::process::Child::raw_handle)
+            .ok_or(StatusLineCommandError::Spawn)?;
+        self.ops
+            .assign(self.job.as_ref().expect("job exists before spawn"), process)
+            .map_err(|_| StatusLineCommandError::JobAssign)?;
+        self.assigned = true;
+        self.ops
+            .resume(process)
+            .map_err(|_| StatusLineCommandError::Resume)
+    }
+
+    fn active_processes(&self) -> std::io::Result<u32> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::JOBOBJECT_BASIC_ACCOUNTING_INFORMATION;
+        use windows_sys::Win32::System::JobObjects::JobObjectBasicAccountingInformation;
+        use windows_sys::Win32::System::JobObjects::QueryInformationJobObject;
+        let Some(job) = self.job.as_ref() else {
+            return Ok(0);
+        };
+        let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        let queried = unsafe {
+            QueryInformationJobObject(
+                job.as_raw_handle().cast(),
+                JobObjectBasicAccountingInformation,
+                (&raw mut accounting).cast(),
+                std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if queried == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(accounting.ActiveProcesses)
+        }
+    }
+
+    fn terminate_tree(&mut self) {
+        if self.termination_attempted {
+            return;
+        }
+        self.termination_attempted = true;
+        if let Some(job) = self.job.as_ref()
+            && let Err(error) = self.ops.terminate(job)
+        {
+            // Preserve the injected/OS failure, while a real emergency call still
+            // permits verification with this same owned job handle.
+            let fallback = DefaultWindowsNativeOps.terminate(job);
+            self.terminate_error = Some(match fallback {
+                Ok(()) => error,
+                Err(other) => {
+                    std::io::Error::other(format!("{error}; emergency termination: {other}"))
+                }
+            });
+            self.kill_root();
+        }
+        if !self.assigned {
+            self.kill_root();
+        }
+    }
+
+    async fn finish(
+        &mut self,
+        primary: Option<StatusLineCommandError>,
+    ) -> Result<(), StatusLineCommandError> {
+        self.terminate_tree();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut reap_error = None;
+        let mut timed_out = false;
+        if !self.reaped
+            && let Some(child) = self.child.as_mut()
+        {
+            match tokio::time::timeout_at(deadline, self.ops.wait(child)).await {
+                Ok(Ok(_)) => self.reaped = true,
+                Ok(Err(error)) => {
+                    reap_error = Some(error);
+                    match child.try_wait() {
+                        Ok(Some(_)) => self.reaped = true,
+                        Ok(None) => {
+                            if let Err(error) = child.start_kill() {
+                                Self::append_error(&mut reap_error, error);
+                            }
+                            match tokio::time::timeout_at(deadline, child.wait()).await {
+                                Ok(Ok(_)) => self.reaped = true,
+                                Ok(Err(error)) => Self::append_error(&mut reap_error, error),
+                                Err(_) => timed_out = true,
+                            }
+                        }
+                        Err(error) => {
+                            Self::append_error(&mut reap_error, error);
+                            if let Err(error) = child.start_kill() {
+                                Self::append_error(&mut reap_error, error);
+                            }
+                            match tokio::time::timeout_at(deadline, child.wait()).await {
+                                Ok(Ok(_)) => self.reaped = true,
+                                Ok(Err(error)) => Self::append_error(&mut reap_error, error),
+                                Err(_) => timed_out = true,
+                            }
+                        }
+                    }
+                }
+                Err(_) => timed_out = true,
+            }
+        }
+        if !self.reaped && self.child.is_some() {
+            timed_out = true;
+            Self::append_error(
+                &mut reap_error,
+                std::io::Error::other("child was not reaped"),
+            );
+        }
+        loop {
+            match self.active_processes() {
+                Ok(0) => break,
+                Ok(_) if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                Ok(_) => {
+                    timed_out = true;
+                    Self::append_error(
+                        &mut reap_error,
+                        std::io::Error::other("job still has active processes"),
+                    );
+                    break;
+                }
+                Err(error) => {
+                    Self::append_error(&mut reap_error, error);
+                    break;
+                }
+            }
+        }
+        if self.reaped && !timed_out && reap_error.is_none() {
+            self.child.take();
+            self.job.take();
+        }
+        let terminate = self.terminate_error.take();
+        if terminate.is_some() || reap_error.is_some() || timed_out {
+            Err(StatusLineCommandError::Cleanup {
+                primary: primary.map(Box::new),
+                terminate,
+                reap: reap_error,
+                timed_out,
+            })
+        } else if let Some(primary) = primary {
+            Err(primary)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(windows)]
+impl<O: WindowsNativeOps> Drop for WindowsCommandOwner<O> {
+    fn drop(&mut self) {
+        if self.job.is_none() && self.child.is_none() {
+            return;
+        }
+        self.terminate_tree();
+        self.kill_root();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut reaped = self.reaped || self.child.is_none();
+        let mut empty = self.job.is_none();
+        while std::time::Instant::now() < deadline && (!reaped || !empty) {
+            if !reaped && let Some(child) = self.child.as_mut() {
+                match child.try_wait() {
+                    Ok(Some(_)) => reaped = true,
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::error!("status-line child reap during Drop failed: {error}");
+                        break;
+                    }
+                }
+            }
+            if !empty {
+                match self.active_processes() {
+                    Ok(0) => empty = true,
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::error!("status-line job query during Drop failed: {error}");
+                        break;
+                    }
+                }
+            }
+            if !reaped || !empty {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        if !reaped || !empty {
+            tracing::error!(
+                "status-line last-resort Drop could not verify child reap and empty job"
+            );
+        }
+        if let Some(error) = self.terminate_error.as_ref() {
+            tracing::error!("status-line termination during Drop failed: {error}");
+        }
+        // A failed terminate still has kill-on-last-close as the final tree stop.
+        self.child.take();
+        self.job.take();
+    }
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+async fn run_status_line_command_with_ops<O: WindowsNativeOps + 'static>(
     request: StatusLineCommandRequest,
     cancellation: tokio::sync::oneshot::Receiver<()>,
     ops: O,
 ) -> Result<Line<'static>, StatusLineCommandError> {
-    let _ = (request, cancellation, ops);
-    Err(StatusLineCommandError::Unsupported)
+    let started = tokio::time::Instant::now();
+    let (mut sender, receiver) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let result =
+            run_status_line_command_supervised(request, cancellation, ops, started, &mut sender)
+                .await;
+        let _ = sender.send(result);
+    });
+    receiver
+        .await
+        .unwrap_or(Err(StatusLineCommandError::Cancelled))
 }
 
-/// Inert Task 4 scaffold. The contained Windows implementation follows hosted RED.
+#[cfg(windows)]
+async fn run_status_line_command_supervised<O: WindowsNativeOps>(
+    request: StatusLineCommandRequest,
+    mut cancellation: tokio::sync::oneshot::Receiver<()>,
+    ops: O,
+    started: tokio::time::Instant,
+    sender: &mut tokio::sync::oneshot::Sender<Result<Line<'static>, StatusLineCommandError>>,
+) -> Result<Line<'static>, StatusLineCommandError> {
+    use std::process::Stdio;
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+    if request.config.command.trim().is_empty() {
+        return Err(StatusLineCommandError::InvalidCommand);
+    }
+    let deadline = started + std::time::Duration::from_millis(request.config.timeout_ms);
+    if tokio::time::Instant::now() >= deadline {
+        return Err(StatusLineCommandError::Timeout);
+    }
+    let system_root = std::env::var_os("SystemRoot").ok_or(StatusLineCommandError::Spawn)?;
+    let shell = PathBuf::from(system_root).join("System32").join("cmd.exe");
+    if !shell.is_file() {
+        return Err(StatusLineCommandError::Spawn);
+    }
+    let payload =
+        serde_json::to_vec(&request.payload).map_err(|_| StatusLineCommandError::StdinWrite)?;
+    if tokio::time::Instant::now() >= deadline {
+        return Err(StatusLineCommandError::Timeout);
+    }
+    let mut command = tokio::process::Command::new(shell);
+    command.arg("/D").arg("/S").arg("/C");
+    // /S removes exactly this outer pair, retaining quoted command and argument paths.
+    command.raw_arg(format!("\"{}\"", request.config.command));
+    command
+        .current_dir(&request.cwd)
+        .env("CCSTATUSLINE_WIDTH", request.width.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
+        .kill_on_drop(true);
+
+    let job = ops
+        .create_job()
+        .map_err(|_| StatusLineCommandError::JobCreate)?;
+    let mut owner = WindowsCommandOwner::new(ops, job);
+    if tokio::time::Instant::now() >= deadline {
+        return match owner.finish(Some(StatusLineCommandError::Timeout)).await {
+            Err(error) => Err(error),
+            Ok(()) => unreachable!("expired request must remain a timeout"),
+        };
+    }
+    if let Err(primary) = owner.launch(&mut command) {
+        return match owner.finish(Some(primary)).await {
+            Err(error) => Err(error),
+            Ok(()) => unreachable!("a launch failure must remain a failure"),
+        };
+    }
+    let child = owner.child.as_mut().expect("launched child is owned");
+    let stdin = child.stdin.take();
+    let stdout = child.stdout.take();
+    let missing_stdin = stdin.is_none();
+    let (Some(mut stdin), Some(mut stdout)) = (stdin, stdout) else {
+        let primary = if missing_stdin {
+            StatusLineCommandError::StdinWrite
+        } else {
+            StatusLineCommandError::StdoutRead
+        };
+        return match owner.finish(Some(primary)).await {
+            Err(error) => Err(error),
+            Ok(()) => unreachable!("missing pipe must remain a failure"),
+        };
+    };
+    let mut writer = Box::pin(async move { write_status_line_stdin(&mut stdin, &payload).await });
+    let mut reader = Box::pin(async move { read_status_line_stdout(&mut stdout).await });
+    let mut write_done = false;
+    let mut read_done = false;
+    let mut output = None;
+    let mut status = None;
+    let mut primary = None;
+    let mut cancellation_open = true;
+
+    while primary.is_none() && (!write_done || !read_done || status.is_none()) {
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(deadline) => {
+                primary = Some(StatusLineCommandError::Timeout);
+            }
+            cancellation_result = &mut cancellation, if cancellation_open => {
+                if cancellation_result.is_ok() {
+                    primary = Some(StatusLineCommandError::Cancelled);
+                } else {
+                    cancellation_open = false;
+                }
+            }
+            _ = sender.closed() => {
+                primary = Some(StatusLineCommandError::Cancelled);
+            }
+            result = &mut writer, if !write_done => {
+                write_done = true;
+                match result {
+                    Ok(()) => {},
+                    Err(error) => primary = Some(error),
+                }
+            }
+            result = &mut reader, if !read_done => {
+                read_done = true;
+                match result {
+                    Ok(bytes) => output = Some(bytes),
+                    Err(error) => primary = Some(error),
+                }
+            }
+            result = owner.ops.wait(owner.child.as_mut().expect("launched child is owned")), if status.is_none() => {
+                match classify_status_line_wait(result) {
+                    Ok(exit) => {
+                        owner.reaped = true;
+                        status = Some(exit);
+                        // A descendant can inherit stdout and keep the pipe open after
+                        // its root exits. Stop the job now, before awaiting pipe EOF.
+                        owner.terminate_tree();
+                    }
+                    Err(error) => primary = Some(error),
+                }
+            }
+        }
+    }
+    if primary.is_none() && tokio::time::Instant::now() >= deadline {
+        primary = Some(StatusLineCommandError::Timeout);
+    }
+    if primary.is_some() {
+        owner.terminate_tree();
+    }
+    // Both pipe futures belong to this supervisor. Dropping them closes their
+    // handles before the owner begins child/job cleanup, even on early failure.
+    drop(writer);
+    drop(reader);
+    let rendered = if primary.is_none() {
+        let exit = status.as_ref().expect("successful runner has reaped root");
+        if !exit.success() {
+            primary = Some(StatusLineCommandError::ExitFailure);
+            None
+        } else {
+            let line = render_status_line_command_output(
+                output.as_deref().expect("successful runner drained stdout"),
+                request.width,
+            );
+            if line.is_none() {
+                primary = Some(StatusLineCommandError::EmptyOutput);
+            }
+            line
+        }
+    } else {
+        None
+    };
+    owner.finish(primary).await?;
+    Ok(rendered.expect("successful cleanup has a visible line"))
+}
+
+/// Runs a trusted status command; on Windows its supervisor owns teardown after caller abort.
 #[allow(dead_code)]
 pub(crate) async fn run_status_line_command(
     request: StatusLineCommandRequest,
@@ -789,23 +1247,45 @@ pub(crate) async fn run_status_line_command(
     }
 }
 
-/// The implementation will share this narrow write path with deterministic fault tests.
+/// Write the complete JSON payload, then close stdin so readers can observe EOF.
 #[allow(dead_code)]
 async fn write_status_line_stdin<W: tokio::io::AsyncWrite + Unpin>(
     writer: &mut W,
     payload: &[u8],
 ) -> Result<(), StatusLineCommandError> {
-    let _ = (writer, payload);
-    Err(StatusLineCommandError::Unsupported)
+    use tokio::io::AsyncWriteExt;
+    writer
+        .write_all(payload)
+        .await
+        .map_err(|_| StatusLineCommandError::StdinWrite)?;
+    writer
+        .shutdown()
+        .await
+        .map_err(|_| StatusLineCommandError::StdinWrite)
 }
 
-/// The implementation will share this narrow capped read path with fault tests.
+/// Stop at byte 65,537 so a full pipe cannot turn truncated output into success.
 #[allow(dead_code)]
 async fn read_status_line_stdout<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut R,
 ) -> Result<Vec<u8>, StatusLineCommandError> {
-    let _ = reader;
-    Err(StatusLineCommandError::Unsupported)
+    use tokio::io::AsyncReadExt;
+    const LIMIT: usize = 65_536;
+    let mut output = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .await
+            .map_err(|_| StatusLineCommandError::StdoutRead)?;
+        if read == 0 {
+            return Ok(output);
+        }
+        if output.len() + read > LIMIT {
+            return Err(StatusLineCommandError::OutputCap);
+        }
+        output.extend_from_slice(&buffer[..read]);
+    }
 }
 
 /// Keeps wait-error mapping narrow enough to exercise without a fake process type.
@@ -813,8 +1293,7 @@ async fn read_status_line_stdout<R: tokio::io::AsyncRead + Unpin>(
 fn classify_status_line_wait(
     status: std::io::Result<std::process::ExitStatus>,
 ) -> Result<std::process::ExitStatus, StatusLineCommandError> {
-    let _ = status;
-    Err(StatusLineCommandError::Unsupported)
+    status.map_err(|_| StatusLineCommandError::Wait)
 }
 
 #[cfg(test)]
