@@ -11,6 +11,803 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use serde_json::json;
 
+mod scheduler_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use std::time::Instant as WallInstant;
+    use tokio::sync::mpsc;
+    use tokio::sync::oneshot;
+
+    const WALL_WATCHDOG: Duration = Duration::from_secs(2);
+    const SPACING: Duration = Duration::from_millis(300);
+
+    struct Start {
+        request: StatusLineCommandRequest,
+        at: tokio::time::Instant,
+        finish: oneshot::Sender<Result<Line<'static>, StatusLineCommandError>>,
+        cancelled: oneshot::Receiver<()>,
+        allow_cleanup: oneshot::Sender<()>,
+    }
+
+    struct Harness {
+        scheduler: StatusLineCommandScheduler,
+        events: mpsc::UnboundedReceiver<StatusLineCommandEvent>,
+        starts: mpsc::UnboundedReceiver<Start>,
+    }
+
+    fn harness() -> Harness {
+        let (event_tx, events) = mpsc::unbounded_channel();
+        let (start_tx, starts) = mpsc::unbounded_channel();
+        let runner: StatusLineCommandRunFn = Arc::new(move |request, mut cancellation| {
+            let (finish, finished) = oneshot::channel();
+            let (cancelled, cancel_observed) = oneshot::channel();
+            let (allow_cleanup, cleanup_released) = oneshot::channel();
+            let start = Start {
+                request,
+                at: tokio::time::Instant::now(),
+                finish,
+                cancelled: cancel_observed,
+                allow_cleanup,
+            };
+            assert!(
+                start_tx.send(start).is_ok(),
+                "scheduler starts remain observed"
+            );
+            Box::pin(async move {
+                tokio::select! {
+                    result = finished => result.unwrap_or(Err(StatusLineCommandError::Cancelled)),
+                    _ = &mut cancellation => {
+                        let _ = cancelled.send(());
+                        let _ = cleanup_released.await;
+                        Err(StatusLineCommandError::Cancelled)
+                    }
+                }
+            })
+        });
+        Harness {
+            scheduler: StatusLineCommandScheduler::with_runner(event_tx, runner),
+            events,
+            starts,
+        }
+    }
+
+    fn config(command: &str, interval: u64, timeout_ms: u64) -> StatusLineCommandConfig {
+        StatusLineCommandConfig {
+            command: command.to_string(),
+            refresh_interval_secs: interval,
+            timeout_ms,
+        }
+    }
+
+    fn snapshot(
+        session_id: &str,
+        config: Option<StatusLineCommandConfig>,
+        marker: &str,
+        width: usize,
+    ) -> StatusLineCommandSnapshot {
+        StatusLineCommandSnapshot {
+            session_id: session_id.to_string(),
+            config,
+            payload: json!({"marker": marker}),
+            cwd: std::env::temp_dir(),
+            width,
+        }
+    }
+
+    async fn receive<T>(receiver: &mut mpsc::UnboundedReceiver<T>) -> T {
+        let deadline = WallInstant::now() + WALL_WATCHDOG;
+        loop {
+            match receiver.try_recv() {
+                Ok(item) => return item,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    panic!("scheduler observation channel closed")
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    assert!(
+                        WallInstant::now() < deadline,
+                        "scheduler observation watchdog expired"
+                    );
+                    tokio::task::yield_now().await;
+                }
+            }
+        }
+    }
+
+    async fn receive_cancelled(start: &mut Start) {
+        let deadline = WallInstant::now() + WALL_WATCHDOG;
+        loop {
+            match start.cancelled.try_recv() {
+                Ok(()) => return,
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    panic!("runner exited without observing cancellation")
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    assert!(
+                        WallInstant::now() < deadline,
+                        "cancellation watchdog expired"
+                    );
+                    tokio::task::yield_now().await;
+                }
+            }
+        }
+    }
+
+    async fn no_message<T>(receiver: &mut mpsc::UnboundedReceiver<T>) {
+        settle().await;
+        assert!(
+            matches!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+            "unexpected scheduler message"
+        );
+    }
+
+    async fn settle() {
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    async fn next_effect(harness: &mut Harness) -> StatusLineCommandEffect {
+        let event = receive(&mut harness.events).await;
+        harness.scheduler.handle_event(event).await
+    }
+
+    async fn delayed_start(harness: &mut Harness) -> Start {
+        let event = receive(&mut harness.events).await;
+        assert!(matches!(&event, StatusLineCommandEvent::DelayReady { .. }));
+        let effect = harness.scheduler.handle_event(event).await;
+        assert!(effect.display.is_none());
+        assert!(effect.warning.is_none());
+        assert!(!effect.request_refresh);
+        receive(&mut harness.starts).await
+    }
+
+    fn line(text: &str) -> Line<'static> {
+        Line::from(text.to_string())
+    }
+
+    fn assert_command(effect: StatusLineCommandEffect, expected: &str) {
+        match effect.display {
+            Some(StatusLineCommandDisplay::Command(actual)) => assert_eq!(
+                actual
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>(),
+                expected
+            ),
+            other => panic!("expected command line {expected:?}, got {other:?}"),
+        }
+    }
+
+    fn assert_builtin(effect: StatusLineCommandEffect) {
+        assert!(matches!(
+            effect.display,
+            Some(StatusLineCommandDisplay::BuiltIn)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn first_enabled_snapshot_starts_immediately_and_publishes_result() {
+        let mut h = harness();
+        let before = tokio::time::Instant::now();
+        h.scheduler
+            .update(snapshot(
+                "session",
+                Some(config("one", 0, 2000)),
+                "first",
+                42,
+            ))
+            .await;
+        let start = receive(&mut h.starts).await;
+        assert_eq!(start.at, before);
+        assert_eq!(start.request.payload["marker"], "first");
+        assert_eq!(start.request.width, 42);
+        start
+            .finish
+            .send(Ok(line("ready")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "ready");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn active_refreshes_coalesce_to_latest_snapshot_at_300_ms() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "a", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "b", 21))
+            .await;
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "c", 37))
+            .await;
+        first
+            .finish
+            .send(Ok(line("first")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "first");
+        settle().await;
+        tokio::time::advance(SPACING - Duration::from_millis(1)).await;
+        no_message(&mut h.events).await;
+        no_message(&mut h.starts).await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        let second = delayed_start(&mut h).await;
+        assert_eq!(second.at.duration_since(first.at), SPACING);
+        assert_eq!(second.request.payload["marker"], "c");
+        assert_eq!(second.request.width, 37);
+        no_message(&mut h.starts).await;
+        second
+            .finish
+            .send(Ok(line("second")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "second");
+        tokio::time::advance(SPACING * 2).await;
+        no_message(&mut h.events).await;
+        no_message(&mut h.starts).await;
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn pending_delay_keeps_original_deadline_when_more_updates_arrive() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "a", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        tokio::time::advance(Duration::from_millis(100)).await;
+        first
+            .finish
+            .send(Ok(line("first")))
+            .expect("finish accepted");
+        next_effect(&mut h).await;
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "b", 20))
+            .await;
+        settle().await;
+        tokio::time::advance(Duration::from_millis(150)).await;
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "c", 28))
+            .await;
+        settle().await;
+        tokio::time::advance(Duration::from_millis(49)).await;
+        no_message(&mut h.events).await;
+        no_message(&mut h.starts).await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        let second = delayed_start(&mut h).await;
+        assert_eq!(second.at.duration_since(first.at), SPACING);
+        assert_eq!(second.request.payload["marker"], "c");
+        assert_eq!(second.request.width, 28);
+        second
+            .finish
+            .send(Ok(line("second")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "second");
+        tokio::time::advance(SPACING * 2).await;
+        no_message(&mut h.events).await;
+        no_message(&mut h.starts).await;
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn consumed_delay_event_is_inert_during_newer_same_runtime_delay() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "first", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        first
+            .finish
+            .send(Ok(line("first")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "first");
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "second", 20))
+            .await;
+        settle().await;
+        tokio::time::advance(SPACING).await;
+        let old_ready = receive(&mut h.events).await;
+        let (runtime, old_epoch) = match &old_ready {
+            StatusLineCommandEvent::DelayReady { runtime, epoch } => (*runtime, *epoch),
+            other => panic!("expected queued delay event, got {other:?}"),
+        };
+        h.scheduler.handle_event(old_ready).await;
+        let second = receive(&mut h.starts).await;
+        assert_eq!(second.request.payload["marker"], "second");
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "third", 35))
+            .await;
+        second
+            .finish
+            .send(Ok(line("second")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "second");
+        settle().await;
+        let stale = h
+            .scheduler
+            .handle_event(StatusLineCommandEvent::DelayReady {
+                runtime,
+                epoch: old_epoch,
+            })
+            .await;
+        assert!(stale.display.is_none());
+        assert!(stale.warning.is_none());
+        assert!(!stale.request_refresh);
+        no_message(&mut h.starts).await;
+        tokio::time::advance(SPACING).await;
+        let current_ready = receive(&mut h.events).await;
+        match &current_ready {
+            StatusLineCommandEvent::DelayReady {
+                runtime: current_runtime,
+                epoch,
+            } => {
+                assert_eq!(*current_runtime, runtime);
+                assert_ne!(*epoch, old_epoch);
+            }
+            other => panic!("expected replacement delay event, got {other:?}"),
+        }
+        h.scheduler.handle_event(current_ready).await;
+        let third = receive(&mut h.starts).await;
+        assert_eq!(third.request.payload["marker"], "third");
+        assert_eq!(third.request.width, 35);
+        third
+            .finish
+            .send(Ok(line("third")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "third");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn disable_cancels_pending_delay_and_clears_command_line() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "a", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        first.finish.send(Ok(line("old"))).expect("finish accepted");
+        next_effect(&mut h).await;
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "b", 20))
+            .await;
+        let effect = h
+            .scheduler
+            .update(snapshot("s", None, "disabled", 20))
+            .await;
+        assert_builtin(effect);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        while let Ok(event) = h.events.try_recv() {
+            let effect = h.scheduler.handle_event(event).await;
+            assert!(effect.display.is_none());
+            assert!(!effect.request_refresh);
+        }
+        no_message(&mut h.starts).await;
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn replacement_waits_for_cancellation_cleanup_and_global_spacing() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "old", 20))
+            .await;
+        let mut first = receive(&mut h.starts).await;
+        tokio::time::advance(Duration::from_millis(100)).await;
+        let update = tokio::spawn(async move {
+            h.scheduler
+                .update(snapshot("s", Some(config("two", 0, 2000)), "new", 30))
+                .await;
+            h
+        });
+        receive_cancelled(&mut first).await;
+        tokio::time::advance(SPACING).await;
+        assert!(
+            !update.is_finished(),
+            "replacement advanced before cleanup acknowledgment"
+        );
+        first
+            .allow_cleanup
+            .send(())
+            .expect("cleanup release accepted");
+        let mut h = update.await.expect("scheduler update task");
+        let second = receive(&mut h.starts).await;
+        assert!(second.at.duration_since(first.at) >= SPACING);
+        assert_eq!(second.request.config.command, "two");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn config_replacement_before_deadline_does_not_burst() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "old", 20))
+            .await;
+        let mut first = receive(&mut h.starts).await;
+        tokio::time::advance(Duration::from_millis(100)).await;
+        let update = tokio::spawn(async move {
+            h.scheduler
+                .update(snapshot("s", Some(config("two", 0, 2000)), "new", 20))
+                .await;
+            h
+        });
+        receive_cancelled(&mut first).await;
+        first
+            .allow_cleanup
+            .send(())
+            .expect("cleanup release accepted");
+        let mut h = update.await.expect("scheduler update task");
+        no_message(&mut h.starts).await;
+        tokio::time::advance(Duration::from_millis(199)).await;
+        no_message(&mut h.events).await;
+        no_message(&mut h.starts).await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        let second = delayed_start(&mut h).await;
+        assert_eq!(second.at.duration_since(first.at), SPACING);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn stale_generation_cannot_publish_warn_or_consume_dirty_refresh() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "old", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        let first_generation = h.scheduler.generation();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "new", 30))
+            .await;
+        let runtime = h.scheduler.runtime_id();
+        let stale_generation = h.scheduler.generation().saturating_add(1);
+        let stale = h
+            .scheduler
+            .handle_event(StatusLineCommandEvent::Finished {
+                runtime,
+                generation: stale_generation,
+                result: Err(StatusLineCommandError::ExitFailure),
+            })
+            .await;
+        assert!(stale.display.is_none());
+        assert!(stale.warning.is_none());
+        assert!(!stale.request_refresh);
+        first
+            .finish
+            .send(Ok(line("valid")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "valid");
+        settle().await;
+        tokio::time::advance(SPACING).await;
+        let second = delayed_start(&mut h).await;
+        assert_eq!(second.request.payload["marker"], "new");
+        assert!(h.scheduler.generation() > first_generation);
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "latest", 41))
+            .await;
+        for result in [Ok(line("stale")), Err(StatusLineCommandError::ExitFailure)] {
+            let stale = h
+                .scheduler
+                .handle_event(StatusLineCommandEvent::Finished {
+                    runtime,
+                    generation: first_generation,
+                    result,
+                })
+                .await;
+            assert!(stale.display.is_none());
+            assert!(stale.warning.is_none());
+            assert!(!stale.request_refresh);
+        }
+        second
+            .finish
+            .send(Ok(line("current")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "current");
+        settle().await;
+        tokio::time::advance(SPACING).await;
+        let third = delayed_start(&mut h).await;
+        assert_eq!(third.request.payload["marker"], "latest");
+        assert_eq!(third.request.width, 41);
+        third
+            .finish
+            .send(Err(StatusLineCommandError::ExitFailure))
+            .expect("finish accepted");
+        assert_eq!(
+            next_effect(&mut h).await.warning,
+            Some(StatusLineCommandFailureKind::ExitFailure)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn old_runtime_and_old_scheduler_events_are_inert() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("old", Some(config("one", 0, 2000)), "old", 20))
+            .await;
+        let old_runtime = h.scheduler.runtime_id();
+        let mut first = receive(&mut h.starts).await;
+        let old_generation = h.scheduler.generation();
+        let update = tokio::spawn(async move {
+            h.scheduler
+                .update(snapshot("new", Some(config("one", 0, 2000)), "new", 20))
+                .await;
+            h
+        });
+        receive_cancelled(&mut first).await;
+        first
+            .allow_cleanup
+            .send(())
+            .expect("cleanup release accepted");
+        let mut h = update.await.expect("scheduler update task");
+        assert_ne!(h.scheduler.runtime_id(), old_runtime);
+        settle().await;
+        tokio::time::advance(SPACING).await;
+        let second = delayed_start(&mut h).await;
+        assert_eq!(second.request.payload["marker"], "new");
+        assert!(h.scheduler.generation() > old_generation);
+        for event in [
+            StatusLineCommandEvent::Tick {
+                runtime: old_runtime,
+                epoch: 0,
+            },
+            StatusLineCommandEvent::DelayReady {
+                runtime: old_runtime,
+                epoch: 0,
+            },
+            StatusLineCommandEvent::Finished {
+                runtime: old_runtime,
+                generation: 1,
+                result: Err(StatusLineCommandError::ExitFailure),
+            },
+        ] {
+            let effect = h.scheduler.handle_event(event).await;
+            assert!(effect.display.is_none());
+            assert!(effect.warning.is_none());
+            assert!(!effect.request_refresh);
+        }
+        let (new_tx, _new_rx) = mpsc::unbounded_channel();
+        let mut replacement = StatusLineCommandScheduler::new(new_tx);
+        assert_ne!(replacement.runtime_id().instance, old_runtime.instance);
+        let effect = replacement
+            .handle_event(StatusLineCommandEvent::Tick {
+                runtime: old_runtime,
+                epoch: 0,
+            })
+            .await;
+        assert!(!effect.request_refresh);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn periodic_tick_requests_fresh_snapshot_before_running_again() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 1, 2000)), "old", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        first.finish.send(Ok(line("old"))).expect("finish accepted");
+        next_effect(&mut h).await;
+        let current = h.scheduler.runtime_id();
+        for event in [
+            StatusLineCommandEvent::Tick {
+                runtime: current,
+                epoch: u64::MAX,
+            },
+            StatusLineCommandEvent::DelayReady {
+                runtime: current,
+                epoch: u64::MAX,
+            },
+        ] {
+            let effect = h.scheduler.handle_event(event).await;
+            assert!(!effect.request_refresh);
+            assert!(effect.display.is_none());
+        }
+        settle().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let tick = receive(&mut h.events).await;
+        let effect = h.scheduler.handle_event(tick).await;
+        assert!(effect.request_refresh);
+        no_message(&mut h.starts).await;
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 1, 2000)), "fresh", 52))
+            .await;
+        let second = receive(&mut h.starts).await;
+        assert_eq!(second.request.payload["marker"], "fresh");
+        assert_eq!(second.request.width, 52);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn interval_change_replaces_timer_and_zero_disables_it() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 1, 2000)), "old", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        first.finish.send(Ok(line("old"))).expect("finish accepted");
+        next_effect(&mut h).await;
+        settle().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let old_tick = receive(&mut h.events).await;
+        assert!(matches!(&old_tick, StatusLineCommandEvent::Tick { .. }));
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 3, 2000)), "new", 20))
+            .await;
+        let second = receive(&mut h.starts).await;
+        second
+            .finish
+            .send(Ok(line("new")))
+            .expect("finish accepted");
+        next_effect(&mut h).await;
+        let stale = h.scheduler.handle_event(old_tick).await;
+        assert!(stale.display.is_none());
+        assert!(stale.warning.is_none());
+        assert!(!stale.request_refresh);
+        settle().await;
+        tokio::time::advance(Duration::from_millis(2999)).await;
+        no_message(&mut h.events).await;
+        tokio::time::advance(Duration::from_millis(1)).await;
+        let tick = receive(&mut h.events).await;
+        assert!(h.scheduler.handle_event(tick).await.request_refresh);
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "zero", 20))
+            .await;
+        let third = receive(&mut h.starts).await;
+        third
+            .finish
+            .send(Ok(line("zero")))
+            .expect("finish accepted");
+        next_effect(&mut h).await;
+        tokio::time::advance(Duration::from_secs(4)).await;
+        no_message(&mut h.events).await;
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn timeout_keeps_same_runtime_line_but_other_error_uses_builtin() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "one", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        first
+            .finish
+            .send(Ok(line("good")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "good");
+        tokio::time::advance(SPACING).await;
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "two", 20))
+            .await;
+        let second = receive(&mut h.starts).await;
+        second
+            .finish
+            .send(Err(StatusLineCommandError::Timeout))
+            .expect("finish accepted");
+        let timeout = next_effect(&mut h).await;
+        assert_eq!(timeout.warning, Some(StatusLineCommandFailureKind::Timeout));
+        assert_command(timeout, "good");
+        tokio::time::advance(SPACING).await;
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "three", 20))
+            .await;
+        let third = receive(&mut h.starts).await;
+        third
+            .finish
+            .send(Err(StatusLineCommandError::ExitFailure))
+            .expect("finish accepted");
+        let failure = next_effect(&mut h).await;
+        assert_eq!(
+            failure.warning,
+            Some(StatusLineCommandFailureKind::ExitFailure)
+        );
+        assert_builtin(failure);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn config_invalidation_clears_last_good_and_warning_dedup_is_per_session() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "one", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        first
+            .finish
+            .send(Ok(line("good")))
+            .expect("finish accepted");
+        next_effect(&mut h).await;
+        tokio::time::advance(SPACING).await;
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 3000)), "two", 20))
+            .await;
+        let second = receive(&mut h.starts).await;
+        second
+            .finish
+            .send(Err(StatusLineCommandError::Timeout))
+            .expect("finish accepted");
+        let timeout = next_effect(&mut h).await;
+        assert_builtin(timeout);
+        assert_eq!(timeout.warning, Some(StatusLineCommandFailureKind::Timeout));
+        tokio::time::advance(SPACING).await;
+        h.scheduler
+            .update(snapshot("s", Some(config("two", 0, 3000)), "three", 20))
+            .await;
+        let third = receive(&mut h.starts).await;
+        third
+            .finish
+            .send(Err(StatusLineCommandError::Timeout))
+            .expect("finish accepted");
+        assert_eq!(next_effect(&mut h).await.warning, None);
+        tokio::time::advance(SPACING).await;
+        h.scheduler
+            .update(snapshot(
+                "new-session",
+                Some(config("two", 0, 3000)),
+                "four",
+                20,
+            ))
+            .await;
+        let fourth = receive(&mut h.starts).await;
+        fourth
+            .finish
+            .send(Err(StatusLineCommandError::Timeout))
+            .expect("finish accepted");
+        assert_eq!(
+            next_effect(&mut h).await.warning,
+            Some(StatusLineCommandFailureKind::Timeout)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn shutdown_awaits_cleanup_and_stops_future_events() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "one", 20))
+            .await;
+        let mut first = receive(&mut h.starts).await;
+        let shutdown = tokio::spawn(async move {
+            h.scheduler.shutdown().await;
+            h
+        });
+        receive_cancelled(&mut first).await;
+        assert!(!shutdown.is_finished());
+        first
+            .allow_cleanup
+            .send(())
+            .expect("cleanup release accepted");
+        let mut h = shutdown.await.expect("shutdown task");
+        tokio::time::advance(Duration::from_secs(2)).await;
+        no_message(&mut h.starts).await;
+        no_message(&mut h.events).await;
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn shutdown_cancels_pending_delay_and_periodic_timer() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 1, 2000)), "first", 20))
+            .await;
+        let first = receive(&mut h.starts).await;
+        first
+            .finish
+            .send(Ok(line("first")))
+            .expect("finish accepted");
+        assert_command(next_effect(&mut h).await, "first");
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 1, 2000)), "pending", 25))
+            .await;
+        h.scheduler.shutdown().await;
+        tokio::time::advance(Duration::from_secs(2)).await;
+        no_message(&mut h.starts).await;
+        no_message(&mut h.events).await;
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn drop_sends_cancellation_to_owned_runner() {
+        let mut h = harness();
+        h.scheduler
+            .update(snapshot("s", Some(config("one", 0, 2000)), "one", 20))
+            .await;
+        let mut second = receive(&mut h.starts).await;
+        drop(h.scheduler);
+        receive_cancelled(&mut second).await;
+        second
+            .allow_cleanup
+            .send(())
+            .expect("cleanup release accepted");
+    }
+}
+
 fn counts(
     input: i64,
     cached_input: i64,
@@ -2022,6 +2819,97 @@ mod runner_tests {
             );
             root.assert_gone();
             descendant.assert_gone();
+        }
+
+        async fn scheduler_process_record(path: &Path) -> ExactProcess {
+            let deadline = std::time::Instant::now() + WATCHDOG;
+            loop {
+                if let Some((pid, creation_ticks)) = read_identity(path) {
+                    return ExactProcess::capture(pid, creation_ticks);
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "scheduler did not start fixture process at {}",
+                    path.display()
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+
+        async fn scheduler_assert_gone(process: &ExactProcess) {
+            let deadline = std::time::Instant::now() + WATCHDOG;
+            while unsafe { WaitForSingleObject(process.handle, 0) } != WAIT_OBJECT_0 {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "scheduler left exact process {} running",
+                    process.pid
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            process.assert_gone();
+        }
+
+        async fn scheduler_tree() -> (
+            Fixture,
+            StatusLineCommandScheduler,
+            tokio::sync::mpsc::UnboundedReceiver<StatusLineCommandEvent>,
+            ExactProcess,
+            ExactProcess,
+        ) {
+            let mut fixture = Fixture::new("[Console]::Out.Write('initial')");
+            fixture.track_process("root.pid");
+            fixture.track_process("descendant.pid");
+            let script = tree_script(&fixture, "unused");
+            fs::write(
+                fixture.path("status command with spaces.cmd"),
+                format!("@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"{script}\"\r\n"),
+            )
+            .expect("write scheduler tree fixture");
+            let (events, event_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut scheduler = StatusLineCommandScheduler::new(events);
+            let request = fixture.request(json!({"kind": "scheduler synthetic"}), 30, 10_000);
+            scheduler
+                .update(StatusLineCommandSnapshot {
+                    session_id: "scheduler-session".to_string(),
+                    config: Some(request.config),
+                    payload: request.payload,
+                    cwd: request.cwd,
+                    width: request.width,
+                })
+                .await;
+            let root = scheduler_process_record(&fixture.path("root.pid")).await;
+            let descendant = scheduler_process_record(&fixture.path("descendant.pid")).await;
+            root.assert_running();
+            descendant.assert_running();
+            (fixture, scheduler, event_rx, root, descendant)
+        }
+
+        #[tokio::test]
+        async fn scheduler_disable_cancels_and_reaps_exact_process_tree() {
+            let (_fixture, mut scheduler, _events, root, descendant) = scheduler_tree().await;
+            let effect = scheduler
+                .update(StatusLineCommandSnapshot {
+                    session_id: "scheduler-session".to_string(),
+                    config: None,
+                    payload: json!({"kind": "disabled"}),
+                    cwd: std::env::temp_dir(),
+                    width: 30,
+                })
+                .await;
+            assert!(matches!(
+                effect.display,
+                Some(StatusLineCommandDisplay::BuiltIn)
+            ));
+            scheduler_assert_gone(&root).await;
+            scheduler_assert_gone(&descendant).await;
+        }
+
+        #[tokio::test]
+        async fn scheduler_drop_cancels_and_reaps_exact_process_tree() {
+            let (_fixture, scheduler, _events, root, descendant) = scheduler_tree().await;
+            drop(scheduler);
+            scheduler_assert_gone(&root).await;
+            scheduler_assert_gone(&descendant).await;
         }
     }
 }

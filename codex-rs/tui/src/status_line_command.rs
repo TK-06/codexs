@@ -672,6 +672,162 @@ pub(crate) enum StatusLineCommandError {
     },
 }
 
+/// The TUI supplies a fresh snapshot for each requested command refresh.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct StatusLineCommandSnapshot {
+    pub(crate) session_id: String,
+    pub(crate) config: Option<StatusLineCommandConfig>,
+    pub(crate) payload: Value,
+    pub(crate) cwd: PathBuf,
+    pub(crate) width: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct StatusLineCommandRuntimeId {
+    pub(crate) instance: u64,
+    pub(crate) revision: u64,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) enum StatusLineCommandEvent {
+    Tick {
+        runtime: StatusLineCommandRuntimeId,
+        epoch: u64,
+    },
+    DelayReady {
+        runtime: StatusLineCommandRuntimeId,
+        epoch: u64,
+    },
+    Finished {
+        runtime: StatusLineCommandRuntimeId,
+        generation: u64,
+        result: Result<Line<'static>, StatusLineCommandError>,
+    },
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) enum StatusLineCommandDisplay {
+    Command(Line<'static>),
+    BuiltIn,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum StatusLineCommandFailureKind {
+    Unsupported,
+    InvalidCommand,
+    JobCreate,
+    Spawn,
+    JobAssign,
+    Resume,
+    StdinWrite,
+    StdoutRead,
+    OutputCap,
+    Wait,
+    Timeout,
+    Cancelled,
+    ExitFailure,
+    EmptyOutput,
+    Cleanup,
+}
+
+#[derive(Debug, Default)]
+#[allow(dead_code)]
+pub(crate) struct StatusLineCommandEffect {
+    pub(crate) display: Option<StatusLineCommandDisplay>,
+    pub(crate) warning: Option<StatusLineCommandFailureKind>,
+    pub(crate) request_refresh: bool,
+}
+
+type StatusLineCommandRunFuture = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Line<'static>, StatusLineCommandError>> + Send>,
+>;
+
+type StatusLineCommandRunFn = std::sync::Arc<
+    dyn Fn(
+            StatusLineCommandRequest,
+            tokio::sync::oneshot::Receiver<()>,
+        ) -> StatusLineCommandRunFuture
+        + Send
+        + Sync,
+>;
+
+static NEXT_STATUS_LINE_SCHEDULER_INSTANCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+/// Scheduler API scaffold. The behavioral tests are deliberately RED until implemented.
+#[allow(dead_code)]
+pub(crate) struct StatusLineCommandScheduler {
+    runtime: StatusLineCommandRuntimeId,
+    generation: u64,
+    _events: tokio::sync::mpsc::UnboundedSender<StatusLineCommandEvent>,
+    _runner: StatusLineCommandRunFn,
+}
+
+#[allow(dead_code)]
+impl StatusLineCommandScheduler {
+    pub(crate) fn new(events: tokio::sync::mpsc::UnboundedSender<StatusLineCommandEvent>) -> Self {
+        let runner: StatusLineCommandRunFn = std::sync::Arc::new(|request, cancellation| {
+            Box::pin(run_status_line_command(request, cancellation))
+        });
+        Self::from_runner(events, runner)
+    }
+
+    #[cfg(test)]
+    fn with_runner(
+        events: tokio::sync::mpsc::UnboundedSender<StatusLineCommandEvent>,
+        runner: StatusLineCommandRunFn,
+    ) -> Self {
+        Self::from_runner(events, runner)
+    }
+
+    fn from_runner(
+        events: tokio::sync::mpsc::UnboundedSender<StatusLineCommandEvent>,
+        runner: StatusLineCommandRunFn,
+    ) -> Self {
+        Self {
+            runtime: StatusLineCommandRuntimeId {
+                instance: NEXT_STATUS_LINE_SCHEDULER_INSTANCE
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                revision: 0,
+            },
+            generation: 0,
+            _events: events,
+            _runner: runner,
+        }
+    }
+
+    #[cfg(test)]
+    fn runtime_id(&self) -> StatusLineCommandRuntimeId {
+        self.runtime
+    }
+
+    #[cfg(test)]
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) async fn update(
+        &mut self,
+        _snapshot: StatusLineCommandSnapshot,
+    ) -> StatusLineCommandEffect {
+        StatusLineCommandEffect::default()
+    }
+
+    pub(crate) async fn handle_event(
+        &mut self,
+        _event: StatusLineCommandEvent,
+    ) -> StatusLineCommandEffect {
+        StatusLineCommandEffect::default()
+    }
+
+    pub(crate) async fn shutdown(&mut self) {}
+}
+
 /// Native operations used by the future Windows owner. Keeping these operations on
 /// the runner path lets tests fail one real launch or cleanup step at a time.
 #[cfg(windows)]
