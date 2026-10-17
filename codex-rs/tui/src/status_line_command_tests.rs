@@ -1283,9 +1283,19 @@ mod runner_tests {
 
     #[tokio::test]
     async fn runner_uses_explicit_child_working_directory() {
-        let fixture = Fixture::new("[Console]::Out.Write((Get-Location).Path)");
+        let fixture = Fixture::new(
+            "[Console]::Out.Write((Get-Location).Path + '|' + (Get-Content -LiteralPath 'cwd-only.marker' -Raw).Trim())",
+        );
         let cwd = fixture.path("working directory distinct from executable");
         fs::create_dir(&cwd).expect("create working directory fixture");
+        fs::write(cwd.join("cwd-only.marker"), b"requested cwd")
+            .expect("write marker only in requested cwd");
+        let command_path = fixture.path("status command with spaces.cmd");
+        assert_ne!(
+            fs::canonicalize(&cwd).expect("canonical requested cwd"),
+            fs::canonicalize(command_path.parent().expect("command parent"))
+                .expect("canonical command directory")
+        );
         let mut request = fixture.request(json!({}), 4096, 15_000);
         request.cwd = cwd.clone();
         let (_cancel, task) = launch(request);
@@ -1297,7 +1307,14 @@ mod runner_tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert_eq!(actual.to_lowercase(), cwd.to_string_lossy().to_lowercase());
+        let (reported_cwd, marker) = actual
+            .split_once('|')
+            .expect("fixture should report cwd and relative marker");
+        assert_eq!(marker, "requested cwd");
+        assert_eq!(
+            fs::canonicalize(reported_cwd).expect("canonical reported cwd"),
+            fs::canonicalize(&cwd).expect("canonical requested cwd")
+        );
     }
 
     #[tokio::test]
@@ -1969,7 +1986,7 @@ mod runner_tests {
             );
             let encoded_child = format!("'{}'", child_script.replace('\'', "''"));
             let script = format!(
-                "$start = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToFileTimeUtc(); Set-Content -LiteralPath {} -Value ($PID.ToString() + ',' + $start.ToString()); $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes({encoded_child})); $info = New-Object System.Diagnostics.ProcessStartInfo; $info.FileName = 'powershell.exe'; $info.Arguments = '-NoProfile -NonInteractive -EncodedCommand ' + $encoded; $info.UseShellExecute = $false; $info.CreateNoWindow = $true; $info.RedirectStandardOutput = $false; $info.RedirectStandardError = $false; $child = [System.Diagnostics.Process]::Start($info); while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 20 }}; while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 20 }}",
+                "$start = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToFileTimeUtc(); Set-Content -LiteralPath {} -Value ($PID.ToString() + ',' + $start.ToString()); $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes({encoded_child})); $info = New-Object System.Diagnostics.ProcessStartInfo; $info.FileName = Join-Path (Join-Path $env:SystemRoot 'System32') 'WindowsPowerShell\\v1.0\\powershell.exe'; $info.Arguments = '-NoProfile -NonInteractive -EncodedCommand ' + $encoded; $info.UseShellExecute = $false; $info.CreateNoWindow = $true; $info.RedirectStandardInput = $true; $info.RedirectStandardOutput = $false; $info.RedirectStandardError = $false; $child = [System.Diagnostics.Process]::Start($info); $child.StandardInput.Close(); while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 20 }}; while (-not (Test-Path -LiteralPath {})) {{ Start-Sleep -Milliseconds 20 }}",
                 ps_literal(&fixture.path("root.pid")),
                 ps_literal(&fixture.path("child.ready")),
                 ps_literal(&fixture.path("root.release")),
