@@ -664,6 +664,7 @@ pub(crate) enum StatusLineCommandError {
     Cancelled,
     ExitFailure,
     EmptyOutput,
+    RunnerJoin,
     Cleanup {
         primary: Option<Box<Self>>,
         terminate: Option<std::io::Error>,
@@ -715,7 +716,7 @@ pub(crate) enum StatusLineCommandDisplay {
     BuiltIn,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[allow(dead_code)]
 pub(crate) enum StatusLineCommandFailureKind {
     Unsupported,
@@ -732,7 +733,31 @@ pub(crate) enum StatusLineCommandFailureKind {
     Cancelled,
     ExitFailure,
     EmptyOutput,
+    RunnerJoin,
     Cleanup,
+}
+
+impl StatusLineCommandError {
+    fn failure_kind(&self) -> StatusLineCommandFailureKind {
+        match self {
+            Self::Unsupported => StatusLineCommandFailureKind::Unsupported,
+            Self::InvalidCommand => StatusLineCommandFailureKind::InvalidCommand,
+            Self::JobCreate => StatusLineCommandFailureKind::JobCreate,
+            Self::Spawn => StatusLineCommandFailureKind::Spawn,
+            Self::JobAssign => StatusLineCommandFailureKind::JobAssign,
+            Self::Resume => StatusLineCommandFailureKind::Resume,
+            Self::StdinWrite => StatusLineCommandFailureKind::StdinWrite,
+            Self::StdoutRead => StatusLineCommandFailureKind::StdoutRead,
+            Self::OutputCap => StatusLineCommandFailureKind::OutputCap,
+            Self::Wait => StatusLineCommandFailureKind::Wait,
+            Self::Timeout => StatusLineCommandFailureKind::Timeout,
+            Self::Cancelled => StatusLineCommandFailureKind::Cancelled,
+            Self::ExitFailure => StatusLineCommandFailureKind::ExitFailure,
+            Self::EmptyOutput => StatusLineCommandFailureKind::EmptyOutput,
+            Self::RunnerJoin => StatusLineCommandFailureKind::RunnerJoin,
+            Self::Cleanup { .. } => StatusLineCommandFailureKind::Cleanup,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -759,13 +784,50 @@ type StatusLineCommandRunFn = std::sync::Arc<
 static NEXT_STATUS_LINE_SCHEDULER_INSTANCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-/// Scheduler API scaffold. The behavioral tests are deliberately RED until implemented.
+const STATUS_LINE_MIN_LAUNCH_SPACING: std::time::Duration = std::time::Duration::from_millis(300);
+
+struct StatusLineActiveRun {
+    runtime: StatusLineCommandRuntimeId,
+    generation: u64,
+    cancellation: Option<tokio::sync::oneshot::Sender<()>>,
+    emit_result: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: tokio::task::JoinHandle<Option<StatusLineCommandFailureKind>>,
+}
+
+fn status_line_checked_deadline(
+    from: tokio::time::Instant,
+    duration: std::time::Duration,
+) -> Option<tokio::time::Instant> {
+    from.into_std()
+        .checked_add(duration)
+        .map(tokio::time::Instant::from_std)
+}
+
+/// Owns one command runtime, including its scheduled work and active runner.
 #[allow(dead_code)]
 pub(crate) struct StatusLineCommandScheduler {
     runtime: StatusLineCommandRuntimeId,
     generation: u64,
-    _events: tokio::sync::mpsc::UnboundedSender<StatusLineCommandEvent>,
-    _runner: StatusLineCommandRunFn,
+    events: tokio::sync::mpsc::UnboundedSender<StatusLineCommandEvent>,
+    runner: StatusLineCommandRunFn,
+    session_id: Option<String>,
+    config: Option<StatusLineCommandConfig>,
+    latest: Option<StatusLineCommandSnapshot>,
+    last_launch: Option<tokio::time::Instant>,
+    last_good: Option<Line<'static>>,
+    warned: std::collections::HashSet<StatusLineCommandFailureKind>,
+    dirty: bool,
+    transitioning: bool,
+    closed: bool,
+    cleanup_blocked: bool,
+    timer_epoch: u64,
+    delay_epoch: u64,
+    timer_validity: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    delay_validity: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    timer: Option<tokio::task::JoinHandle<()>>,
+    delay: Option<tokio::task::JoinHandle<()>>,
+    delay_deadline: Option<tokio::time::Instant>,
+    active: Option<StatusLineActiveRun>,
 }
 
 #[allow(dead_code)]
@@ -796,8 +858,26 @@ impl StatusLineCommandScheduler {
                 revision: 0,
             },
             generation: 0,
-            _events: events,
-            _runner: runner,
+            events,
+            runner,
+            session_id: None,
+            config: None,
+            latest: None,
+            last_launch: None,
+            last_good: None,
+            warned: std::collections::HashSet::new(),
+            dirty: false,
+            transitioning: false,
+            closed: false,
+            cleanup_blocked: false,
+            timer_epoch: 0,
+            delay_epoch: 0,
+            timer_validity: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            delay_validity: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            timer: None,
+            delay: None,
+            delay_deadline: None,
+            active: None,
         }
     }
 
@@ -811,21 +891,399 @@ impl StatusLineCommandScheduler {
         self.generation
     }
 
+    fn stop_timer(&mut self) {
+        self.timer_epoch = self
+            .timer_epoch
+            .checked_add(1)
+            .expect("timer epoch overflow");
+        self.timer_validity
+            .store(self.timer_epoch, std::sync::atomic::Ordering::Release);
+        if let Some(timer) = self.timer.take() {
+            timer.abort();
+        }
+    }
+
+    fn stop_delay(&mut self) {
+        self.delay_epoch = self
+            .delay_epoch
+            .checked_add(1)
+            .expect("delay epoch overflow");
+        self.delay_validity
+            .store(self.delay_epoch, std::sync::atomic::Ordering::Release);
+        if let Some(delay) = self.delay.take() {
+            delay.abort();
+        }
+        self.delay_deadline = None;
+    }
+
+    fn start_timer(&mut self) {
+        if self.closed || self.cleanup_blocked {
+            return;
+        }
+        let Some(config) = self.config.as_ref() else {
+            return;
+        };
+        if config.refresh_interval_secs == 0 {
+            return;
+        }
+        let interval = std::time::Duration::from_secs(config.refresh_interval_secs);
+        let Some(mut deadline) =
+            status_line_checked_deadline(tokio::time::Instant::now(), interval)
+        else {
+            tracing::warn!(
+                "status-line refresh interval exceeds the clock range; periodic refresh disabled"
+            );
+            return;
+        };
+        self.timer_epoch = self
+            .timer_epoch
+            .checked_add(1)
+            .expect("timer epoch overflow");
+        let epoch = self.timer_epoch;
+        self.timer_validity
+            .store(epoch, std::sync::atomic::Ordering::Release);
+        let validity = self.timer_validity.clone();
+        let events = self.events.clone();
+        let runtime = self.runtime;
+        self.timer = Some(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep_until(deadline).await;
+                if validity.load(std::sync::atomic::Ordering::Acquire) != epoch {
+                    break;
+                }
+                if events
+                    .send(StatusLineCommandEvent::Tick { runtime, epoch })
+                    .is_err()
+                {
+                    break;
+                }
+                let Some(next) =
+                    status_line_checked_deadline(tokio::time::Instant::now(), interval)
+                else {
+                    tracing::warn!(
+                        "status-line refresh interval exceeds the clock range; periodic refresh stopped"
+                    );
+                    break;
+                };
+                deadline = next;
+            }
+        }));
+    }
+
+    fn start_delay(&mut self, deadline: tokio::time::Instant) {
+        if self.delay.is_some() {
+            return;
+        }
+        self.delay_epoch = self
+            .delay_epoch
+            .checked_add(1)
+            .expect("delay epoch overflow");
+        let epoch = self.delay_epoch;
+        self.delay_validity
+            .store(epoch, std::sync::atomic::Ordering::Release);
+        let validity = self.delay_validity.clone();
+        let events = self.events.clone();
+        let runtime = self.runtime;
+        self.delay_deadline = Some(deadline);
+        self.delay = Some(tokio::spawn(async move {
+            tokio::time::sleep_until(deadline).await;
+            if validity.load(std::sync::atomic::Ordering::Acquire) == epoch {
+                let _ = events.send(StatusLineCommandEvent::DelayReady { runtime, epoch });
+            }
+        }));
+    }
+
+    fn launch_if_ready(&mut self) {
+        if self.closed
+            || self.transitioning
+            || self.cleanup_blocked
+            || !self.dirty
+            || self.active.is_some()
+            || self.config.is_none()
+        {
+            return;
+        }
+        let now = tokio::time::Instant::now();
+        if let Some(last) = self.last_launch {
+            let deadline = status_line_checked_deadline(last, STATUS_LINE_MIN_LAUNCH_SPACING)
+                .expect("300 ms deadline overflow");
+            if now < deadline {
+                self.start_delay(deadline);
+                return;
+            }
+        }
+        self.stop_delay();
+        let Some(snapshot) = self.latest.as_ref() else {
+            return;
+        };
+        let Some(config) = self.config.clone() else {
+            return;
+        };
+        let request = StatusLineCommandRequest {
+            config,
+            payload: snapshot.payload.clone(),
+            cwd: snapshot.cwd.clone(),
+            width: snapshot.width,
+        };
+        let (cancellation, cancelled) = tokio::sync::oneshot::channel();
+        let future = (self.runner)(request, cancelled);
+        self.last_launch = Some(now);
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("run generation overflow");
+        let generation = self.generation;
+        let runtime = self.runtime;
+        let events = self.events.clone();
+        let emit_result = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let emit_for_task = emit_result.clone();
+        let handle = tokio::spawn(async move {
+            let result = match tokio::spawn(future).await {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::error!("status-line runner task failed: {error}");
+                    Err(StatusLineCommandError::RunnerJoin)
+                }
+            };
+            let failure = result
+                .as_ref()
+                .err()
+                .map(StatusLineCommandError::failure_kind);
+            if let Err(error @ StatusLineCommandError::Cleanup { .. }) = &result {
+                // The event may later be invalidated or its receiver dropped.
+                tracing::error!(?error, "status-line runner cleanup failed");
+            }
+            if emit_for_task.load(std::sync::atomic::Ordering::Acquire) {
+                if events
+                    .send(StatusLineCommandEvent::Finished {
+                        runtime,
+                        generation,
+                        result,
+                    })
+                    .is_err()
+                {
+                    tracing::warn!("status-line completion receiver closed");
+                }
+            }
+            failure
+        });
+        self.active = Some(StatusLineActiveRun {
+            runtime,
+            generation,
+            cancellation: Some(cancellation),
+            emit_result,
+            handle,
+        });
+        self.dirty = false;
+    }
+
+    fn warn_once(
+        &mut self,
+        kind: StatusLineCommandFailureKind,
+    ) -> Option<StatusLineCommandFailureKind> {
+        self.warned.insert(kind).then_some(kind)
+    }
+
+    // Keep the JoinHandle in `self` across the await. A dropped update future can
+    // resume teardown later without permitting a replacement run to overlap it.
+    async fn cancel_active(&mut self) -> Option<StatusLineCommandFailureKind> {
+        let Some(active) = self.active.as_mut() else {
+            return None;
+        };
+        active
+            .emit_result
+            .store(false, std::sync::atomic::Ordering::Release);
+        if let Some(cancellation) = active.cancellation.take() {
+            let _ = cancellation.send(());
+        }
+        let outcome = (&mut active.handle).await;
+        self.active.take();
+        match outcome {
+            Ok(Some(
+                kind @ (StatusLineCommandFailureKind::Cleanup
+                | StatusLineCommandFailureKind::RunnerJoin),
+            )) => {
+                self.cleanup_blocked = true;
+                tracing::error!(?kind, "status-line cleanup could not be confirmed");
+                Some(kind)
+            }
+            Ok(_) => None,
+            Err(error) => {
+                self.cleanup_blocked = true;
+                tracing::error!("status-line supervisor task failed during cleanup: {error}");
+                Some(StatusLineCommandFailureKind::RunnerJoin)
+            }
+        }
+    }
+
     pub(crate) async fn update(
         &mut self,
-        _snapshot: StatusLineCommandSnapshot,
+        snapshot: StatusLineCommandSnapshot,
     ) -> StatusLineCommandEffect {
-        StatusLineCommandEffect::default()
+        let mut effect = StatusLineCommandEffect::default();
+        if self.closed {
+            return effect;
+        }
+        let resumed_transition = self.transitioning;
+        if self.transitioning {
+            if let Some(kind) = self.cancel_active().await {
+                effect.warning = self.warn_once(kind);
+            }
+            self.transitioning = false;
+            // The earlier update may have been dropped after clearing the line.
+            effect.display = Some(StatusLineCommandDisplay::BuiltIn);
+        }
+        let new_session = self.session_id.as_deref() != Some(snapshot.session_id.as_str());
+        let changed = new_session || self.config.as_ref() != snapshot.config.as_ref();
+        if changed {
+            self.runtime.revision = self
+                .runtime
+                .revision
+                .checked_add(1)
+                .expect("runtime revision overflow");
+            self.stop_timer();
+            self.stop_delay();
+            self.transitioning = true;
+            self.dirty = snapshot.config.is_some();
+            self.last_good = None;
+            if new_session {
+                self.warned.clear();
+            }
+            self.session_id = Some(snapshot.session_id.clone());
+            self.config = snapshot.config.clone();
+            self.latest = Some(snapshot);
+            effect.display = Some(StatusLineCommandDisplay::BuiltIn);
+            if let Some(kind) = self.cancel_active().await {
+                effect.warning = self.warn_once(kind);
+            }
+            self.transitioning = false;
+            self.start_timer();
+        } else {
+            self.latest = Some(snapshot);
+            if resumed_transition {
+                self.start_timer();
+            }
+            if self.config.is_some() {
+                self.dirty = true;
+            }
+        }
+        self.launch_if_ready();
+        effect
     }
 
     pub(crate) async fn handle_event(
         &mut self,
-        _event: StatusLineCommandEvent,
+        event: StatusLineCommandEvent,
     ) -> StatusLineCommandEffect {
-        StatusLineCommandEffect::default()
+        let mut effect = StatusLineCommandEffect::default();
+        if self.closed || self.transitioning {
+            return effect;
+        }
+        match event {
+            StatusLineCommandEvent::Tick { runtime, epoch } => {
+                if runtime == self.runtime && epoch == self.timer_epoch && self.timer.is_some() {
+                    effect.request_refresh = true;
+                }
+            }
+            StatusLineCommandEvent::DelayReady { runtime, epoch } => {
+                if runtime != self.runtime
+                    || epoch != self.delay_epoch
+                    || self.delay.is_none()
+                    || self
+                        .delay_deadline
+                        .is_none_or(|deadline| tokio::time::Instant::now() < deadline)
+                {
+                    return effect;
+                }
+                self.stop_delay();
+                self.launch_if_ready();
+            }
+            StatusLineCommandEvent::Finished {
+                runtime,
+                generation,
+                result,
+            } => {
+                if runtime != self.runtime
+                    || self.active.as_ref().is_none_or(|active| {
+                        active.runtime != runtime || active.generation != generation
+                    })
+                {
+                    return effect;
+                }
+                // The supervisor emits this only after the runner has returned and
+                // finished tree cleanup. Its remaining handle can be detached now.
+                self.active.take();
+                match result {
+                    Ok(line) => {
+                        self.last_good = Some(line.clone());
+                        effect.display = Some(StatusLineCommandDisplay::Command(line));
+                    }
+                    Err(error) => {
+                        let kind = error.failure_kind();
+                        effect.warning = self.warn_once(kind);
+                        if matches!(
+                            kind,
+                            StatusLineCommandFailureKind::Cleanup
+                                | StatusLineCommandFailureKind::RunnerJoin
+                        ) {
+                            self.cleanup_blocked = true;
+                            self.stop_timer();
+                            self.stop_delay();
+                        }
+                        effect.display = Some(match (kind, self.last_good.as_ref()) {
+                            (StatusLineCommandFailureKind::Timeout, Some(line)) => {
+                                StatusLineCommandDisplay::Command(line.clone())
+                            }
+                            _ => StatusLineCommandDisplay::BuiltIn,
+                        });
+                    }
+                }
+                self.launch_if_ready();
+            }
+        }
+        effect
     }
 
-    pub(crate) async fn shutdown(&mut self) {}
+    pub(crate) async fn shutdown(&mut self) {
+        if self.closed && !self.transitioning {
+            return;
+        }
+        self.closed = true;
+        self.transitioning = true;
+        self.runtime.revision = self
+            .runtime
+            .revision
+            .checked_add(1)
+            .expect("runtime revision overflow");
+        self.stop_timer();
+        self.stop_delay();
+        self.dirty = false;
+        self.config = None;
+        self.latest = None;
+        self.last_good = None;
+        if let Some(kind) = self.cancel_active().await {
+            tracing::error!(?kind, "status-line shutdown cleanup failed");
+        }
+        self.transitioning = false;
+    }
+}
+
+impl Drop for StatusLineCommandScheduler {
+    fn drop(&mut self) {
+        self.stop_timer();
+        self.stop_delay();
+        if let Some(mut active) = self.active.take() {
+            active
+                .emit_result
+                .store(false, std::sync::atomic::Ordering::Release);
+            if let Some(cancellation) = active.cancellation.take() {
+                let _ = cancellation.send(());
+            }
+            // Dropping a Tokio JoinHandle detaches it; the runner's own supervisor
+            // continues to own and reap its process tree after this synchronous Drop.
+            drop(active.handle);
+        }
+    }
 }
 
 /// Native operations used by the future Windows owner. Keeping these operations on
