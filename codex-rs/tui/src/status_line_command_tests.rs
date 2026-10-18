@@ -716,8 +716,8 @@ mod scheduler_tests {
             .send(Err(StatusLineCommandError::Timeout))
             .expect("finish accepted");
         let timeout = next_effect(&mut h).await;
-        assert_builtin(timeout);
         assert_eq!(timeout.warning, Some(StatusLineCommandFailureKind::Timeout));
+        assert_builtin(timeout);
         tokio::time::advance(SPACING).await;
         h.scheduler
             .update(snapshot("s", Some(config("two", 0, 3000)), "three", 20))
