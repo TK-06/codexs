@@ -70,6 +70,7 @@ fn stale_monthly_limit_marks_fresh_rolling_snapshot_stale() {
         primary: Some(RateLimitWindowDisplay {
             used_percent: 20.0,
             resets_at: Some("soon".to_string()),
+            resets_at_unix: None,
             window_minutes: Some(300),
         }),
         secondary: None,
@@ -1881,11 +1882,13 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
             primary: Some(RateLimitWindowDisplay {
                 used_percent: 45.0,
                 resets_at: Some("soon".to_string()),
+                resets_at_unix: None,
                 window_minutes: Some(300),
             }),
             secondary: Some(RateLimitWindowDisplay {
                 used_percent: 30.0,
                 resets_at: Some("later".to_string()),
+                resets_at_unix: None,
                 window_minutes: Some(10_080),
             }),
             credits: None,
@@ -2386,4 +2389,122 @@ fn reset_timestamps_follow_clock_preference() {
     23:00
     00:00 on 22 Sep
     ");
+}
+
+fn status_line_command_snapshot_with_resets(
+    primary_reset: Option<i64>,
+    secondary_reset: Option<i64>,
+) -> RateLimitSnapshot {
+    RateLimitSnapshot {
+        limit_id: None,
+        limit_name: None,
+        normal_model_slug: None,
+        primary: Some(RateLimitWindow {
+            used_percent: 25,
+            window_duration_mins: Some(300),
+            resets_at: primary_reset,
+        }),
+        secondary: Some(RateLimitWindow {
+            used_percent: 75,
+            window_duration_mins: Some(10_080),
+            resets_at: secondary_reset,
+        }),
+        credits: None,
+        individual_limit: None,
+        spend_control_reached: None,
+        plan_type: None,
+        rate_limit_reached_type: None,
+    }
+}
+
+fn status_line_command_reset_capture_time() -> chrono::DateTime<Local> {
+    Local
+        .with_ymd_and_hms(2026, 9, 21, 12, 0, 0)
+        .single()
+        .expect("fixed local capture time")
+}
+
+#[test]
+fn status_line_command_preserves_raw_resets_and_clock_labels() {
+    let captured_at = status_line_command_reset_capture_time();
+    let primary_reset = captured_at.timestamp() + 3_600;
+    let secondary_reset = captured_at.timestamp() + 7_200;
+    let snapshot =
+        status_line_command_snapshot_with_resets(Some(primary_reset), Some(secondary_reset));
+
+    for (clock_format, primary_label, secondary_label) in [
+        (ClockFormat::TwentyFourHour, "13:00", "14:00"),
+        (ClockFormat::TwelveHour, "1:00 PM", "2:00 PM"),
+    ] {
+        let display = super::rate_limits::rate_limit_snapshot_display_for_limit(
+            &snapshot,
+            "codex".to_string(),
+            captured_at,
+            clock_format,
+        );
+        let primary = display.primary.expect("primary window");
+        let secondary = display.secondary.expect("secondary window");
+        assert_eq!(primary.resets_at_unix, Some(primary_reset));
+        assert_eq!(secondary.resets_at_unix, Some(secondary_reset));
+        assert_eq!(primary.resets_at.as_deref(), Some(primary_label));
+        assert_eq!(secondary.resets_at.as_deref(), Some(secondary_label));
+        assert_eq!(primary.used_percent, 25.0);
+        assert_eq!(secondary.used_percent, 75.0);
+        assert_eq!(primary.window_minutes, Some(300));
+        assert_eq!(secondary.window_minutes, Some(10_080));
+    }
+}
+
+#[test]
+fn status_line_command_missing_resets_keep_both_representations_absent() {
+    let captured_at = status_line_command_reset_capture_time();
+    let snapshot = status_line_command_snapshot_with_resets(None, None);
+    let display = super::rate_limits::rate_limit_snapshot_display_for_limit(
+        &snapshot,
+        "codex".to_string(),
+        captured_at,
+        ClockFormat::TwentyFourHour,
+    );
+    let primary = display.primary.expect("primary window");
+    let secondary = display.secondary.expect("secondary window");
+    assert_eq!(primary.resets_at_unix, None);
+    assert_eq!(secondary.resets_at_unix, None);
+    assert_eq!(primary.resets_at, None);
+    assert_eq!(secondary.resets_at, None);
+}
+
+#[test]
+fn status_line_command_preserves_unrenderable_raw_resets() {
+    let captured_at = status_line_command_reset_capture_time();
+    let snapshot = status_line_command_snapshot_with_resets(Some(i64::MAX), Some(i64::MIN));
+    let display = super::rate_limits::rate_limit_snapshot_display_for_limit(
+        &snapshot,
+        "codex".to_string(),
+        captured_at,
+        ClockFormat::TwentyFourHour,
+    );
+    let primary = display.primary.expect("primary window");
+    let secondary = display.secondary.expect("secondary window");
+    assert_eq!(primary.resets_at_unix, Some(i64::MAX));
+    assert_eq!(secondary.resets_at_unix, Some(i64::MIN));
+    assert_eq!(primary.resets_at, None);
+    assert_eq!(secondary.resets_at, None);
+}
+
+#[test]
+fn status_line_command_preserves_epoch_and_negative_second_resets() {
+    let captured_at = status_line_command_reset_capture_time();
+    let snapshot = status_line_command_snapshot_with_resets(Some(0), Some(-1));
+    let display = super::rate_limits::rate_limit_snapshot_display_for_limit(
+        &snapshot,
+        "codex".to_string(),
+        captured_at,
+        ClockFormat::TwentyFourHour,
+    );
+    let primary = display.primary.expect("primary window");
+    let secondary = display.secondary.expect("secondary window");
+    assert_eq!(primary.resets_at_unix, Some(0));
+    assert_eq!(secondary.resets_at_unix, Some(-1));
+    assert!(primary.resets_at.is_some());
+    assert!(secondary.resets_at.is_some());
 }
