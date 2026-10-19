@@ -334,6 +334,10 @@ pub(crate) use self::permissions_menu::auto_review_available;
 pub(crate) use self::permissions_menu::cyber_model_approval_reviewer;
 mod backend_banners;
 mod compaction;
+mod status_line_command_glue;
+pub(crate) use status_line_command_glue::StatusLineCommandIdentity;
+#[cfg(test)]
+mod status_line_command_integration_tests;
 mod luna_reserve_model;
 mod luna_reserve_return;
 mod security_setup;
@@ -721,6 +725,7 @@ pub(crate) struct ChatWidget {
     session_network_proxy: Option<SessionNetworkProxyRuntime>,
     // Shared latch so we only warn once about invalid status-line item IDs.
     status_line_invalid_items_warned: Arc<AtomicBool>,
+    status_line_command: status_line_command_glue::StatusLineCommandWidgetState,
     // Shared latch so we only warn once about invalid terminal-title item IDs.
     terminal_title_invalid_items_warned: Arc<AtomicBool>,
     // Last terminal title emitted, to avoid writing duplicate OSC updates.

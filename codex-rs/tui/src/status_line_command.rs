@@ -768,11 +768,11 @@ pub(crate) struct StatusLineCommandEffect {
     pub(crate) request_refresh: bool,
 }
 
-type StatusLineCommandRunFuture = std::pin::Pin<
+pub(crate) type StatusLineCommandRunFuture = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<Line<'static>, StatusLineCommandError>> + Send>,
 >;
 
-type StatusLineCommandRunFn = std::sync::Arc<
+pub(crate) type StatusLineCommandRunFn = std::sync::Arc<
     dyn Fn(
             StatusLineCommandRequest,
             tokio::sync::oneshot::Receiver<()>,
@@ -840,7 +840,7 @@ impl StatusLineCommandScheduler {
     }
 
     #[cfg(test)]
-    fn with_runner(
+    pub(crate) fn with_runner(
         events: tokio::sync::mpsc::UnboundedSender<StatusLineCommandEvent>,
         runner: StatusLineCommandRunFn,
     ) -> Self {

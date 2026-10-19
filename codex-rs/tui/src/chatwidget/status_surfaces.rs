@@ -307,6 +307,7 @@ impl ChatWidget {
         self.sync_status_surface_shared_state(&selections);
         self.refresh_status_line_from_selections(&selections);
         self.refresh_terminal_title_from_selections(&selections);
+        self.refresh_status_line_command();
     }
 
     /// Recomputes and emits the terminal title from config and runtime state.

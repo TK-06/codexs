@@ -1575,6 +1575,19 @@ pub(crate) enum AppEvent {
     /// Launch the external editor after a normal draw has completed.
     LaunchExternalEditor,
 
+    /// A command scheduler effect scoped to the originating widget and session.
+    StatusLineCommandOutput {
+        identity: crate::chatwidget::StatusLineCommandIdentity,
+        runtime: crate::status_line_command::StatusLineCommandRuntimeId,
+        generation: u64,
+        effect: crate::status_line_command::StatusLineCommandEffect,
+    },
+    /// A validated command timer requests a fresh widget snapshot.
+    StatusLineCommandTick {
+        identity: crate::chatwidget::StatusLineCommandIdentity,
+        runtime: crate::status_line_command::StatusLineCommandRuntimeId,
+        epoch: u64,
+    },
     /// Async update of the current git branch for status line rendering.
     StatusLineBranchUpdated {
         cwd: PathBuf,

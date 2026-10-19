@@ -3209,6 +3209,23 @@ impl App {
                     }
                 }
             }
+            AppEvent::StatusLineCommandOutput {
+                identity,
+                runtime,
+                generation,
+                effect,
+            } => {
+                self.chat_widget
+                    .handle_status_line_command_output(identity, runtime, generation, effect);
+            }
+            AppEvent::StatusLineCommandTick {
+                identity,
+                runtime,
+                epoch,
+            } => {
+                self.chat_widget
+                    .handle_status_line_command_tick(identity, runtime, epoch);
+            }
             AppEvent::StatusLineBranchUpdated { cwd, branch } => {
                 self.chat_widget.set_status_line_branch(cwd, branch);
                 self.refresh_status_line();
