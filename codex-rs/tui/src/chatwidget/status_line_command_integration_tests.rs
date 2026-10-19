@@ -1058,7 +1058,7 @@ async fn payload_reads_actual_widget_state() {
     let p = &first.request.payload;
     assert_eq!(p["hook_event_name"], "Status");
     assert_eq!(p["session_id"], h.chat.thread_id.unwrap().to_string());
-    assert_eq!(p["cwd"], h.chat.config.cwd.to_string());
+    assert_eq!(p["cwd"], h.chat.config.cwd.display().to_string());
     assert_eq!(p["model"]["id"], h.chat.current_model());
     assert_eq!(p["model"]["display_name"], h.chat.model_display_name());
     assert_eq!(p["effort"]["level"], "high");
