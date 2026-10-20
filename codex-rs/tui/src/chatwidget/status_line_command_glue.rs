@@ -589,7 +589,7 @@ fn elapsed_ms(start: Instant) -> i64 {
     i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX)
 }
 
-fn token_counts(usage: &codex_protocol::protocol::TokenUsage) -> StatusLineTokenCounts {
+fn token_counts(usage: &crate::token_usage::TokenUsage) -> StatusLineTokenCounts {
     StatusLineTokenCounts {
         input: usage.input_tokens,
         cached_input: usage.cached_input_tokens,
