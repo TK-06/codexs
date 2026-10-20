@@ -296,9 +296,10 @@ impl ChatWidget {
         for warning in resolution.warnings {
             if !self.status_line_command.config_warned.contains(&warning) {
                 self.status_line_command.config_warned.push(warning);
-                self.add_warning_message(format!(
+                self.add_to_history(crate::history_cell::new_usage_warning_event(format!(
                     "Status line command configuration: {warning:?}."
-                ));
+                )));
+                self.request_redraw();
             }
         }
         let invalidation_pending = self
@@ -415,7 +416,10 @@ impl ChatWidget {
         if let Some(kind) = effect.warning
             && self.status_line_command.warned.insert(kind)
         {
-            self.add_warning_message(format!("Status line command failed: {kind:?}."));
+            self.add_to_history(crate::history_cell::new_usage_warning_event(format!(
+                "Status line command failed: {kind:?}."
+            )));
+            self.request_redraw();
         }
         if let Some(display) = effect.display {
             self.status_line_command.line = match display {

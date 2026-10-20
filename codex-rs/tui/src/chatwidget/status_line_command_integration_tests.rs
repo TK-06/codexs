@@ -916,14 +916,14 @@ async fn width_uses_inline_footer_budget() {
             first.request.width, expected_budget,
             "independent inline oracle; warnings={warning_count}"
         );
-        h.complete(first, Ok(styled(&"x".repeat(expected_budget))))
+        h.complete(first, Ok(styled(&"Z".repeat(expected_budget))))
             .await;
         let buffer = draw_options(&h.chat, 40, options);
         assert_eq!(
             buffer
                 .content
                 .iter()
-                .filter(|cell| cell.symbol() == "x")
+                .filter(|cell| cell.symbol() == "Z")
                 .count(),
             expected_budget
         );
@@ -960,14 +960,14 @@ async fn width_uses_persistent_footer_budget() {
             first.request.width, expected_budget,
             "independent persistent oracle; agent={label:?}"
         );
-        h.complete(first, Ok(styled(&"x".repeat(expected_budget))))
+        h.complete(first, Ok(styled(&"Z".repeat(expected_budget))))
             .await;
         let buffer = draw_options(&h.chat, 48, options);
         assert_eq!(
             buffer
                 .content
                 .iter()
-                .filter(|cell| cell.symbol() == "x")
+                .filter(|cell| cell.symbol() == "Z")
                 .count(),
             expected_budget
         );
