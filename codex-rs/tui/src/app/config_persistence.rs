@@ -473,6 +473,8 @@ impl App {
             .await?;
         self.apply_runtime_policy_overrides(&mut config, RuntimePolicyOverrideScope::All)?;
         self.local_settings = self.local_settings.reloaded(&config);
+        self.chat_widget
+            .set_status_line_command_config(self.local_settings.status_line_command.clone());
         self.refresh_server_version_overview_notice(CODEX_CLI_VERSION);
         // Other preferences have runtime caches and are adopted when the widget is replaced.
         self.chat_widget

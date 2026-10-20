@@ -50,6 +50,7 @@ impl ChatWidget {
         display: SessionConfiguredDisplay,
         fork_parent_title: Option<String>,
     ) {
+        self.reset_status_line_command_session(self.thread_id == Some(session.thread_id));
         self.windows_sandbox_host =
             if !self.windows_sandbox_local_server && self.remote_connection.is_some() {
                 crate::app::WindowsSandboxHost::Remote

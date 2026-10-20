@@ -2377,6 +2377,18 @@ impl BottomPane {
         }
     }
 
+    /// Observe command columns from the composer's actual inline or persistent layout.
+    pub(crate) fn observe_status_line_command_width(&mut self, enabled: bool) {
+        if self.composer.observe_status_line_command_width(enabled) {
+            self.request_redraw();
+        }
+    }
+
+    /// The viewport must still match before the caller uses this measured budget.
+    pub(crate) fn status_line_command_width(&self) -> Option<(u16, usize)> {
+        self.composer.status_line_command_width()
+    }
+
     pub(crate) fn set_luna_reserve_active(&mut self, active: bool) {
         if self.composer.set_luna_reserve_active(active) {
             self.request_redraw();

@@ -200,8 +200,14 @@ impl ChatWidget {
     }
 
     fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
-        let enabled = !selections.status_line_items.is_empty();
+        let enabled = !selections.status_line_items.is_empty()
+            || self.local_settings.status_line_command.config.is_some();
         self.bottom_pane.set_status_line_enabled(enabled);
+        if let Some(line) = self.refit_status_line_command() {
+            self.set_status_line(Some(line));
+            self.set_status_line_hyperlink(None);
+            return;
+        }
         if !enabled {
             self.set_status_line(/*status_line*/ None);
             self.set_status_line_hyperlink(/*url*/ None);
@@ -290,6 +296,12 @@ impl ChatWidget {
                 }
             }
         }
+    }
+
+    /// Apply a result without recursively requesting another command launch.
+    pub(super) fn refresh_status_line_command_display(&mut self) {
+        let selections = self.status_surface_selections();
+        self.refresh_status_line_from_selections(&selections);
     }
 
     /// Recomputes both status surfaces from one shared config snapshot.
@@ -492,7 +504,7 @@ impl ChatWidget {
             })
     }
 
-    fn status_line_cwd(&self) -> &Path {
+    pub(super) fn status_line_cwd(&self) -> &Path {
         self.current_cwd
             .as_deref()
             .unwrap_or(self.config.cwd.as_path())

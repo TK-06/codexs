@@ -1120,6 +1120,7 @@ impl ChatWidget {
                 self.bottom_pane
                     .set_context_window(/*percent*/ None, /*used_tokens*/ None);
                 self.token_info = None;
+                self.observe_status_line_command_tokens();
             }
         }
     }
@@ -1132,6 +1133,7 @@ impl ChatWidget {
         let used_tokens = self.context_used_tokens(&info, percent.is_some());
         self.bottom_pane.set_context_window(percent, used_tokens);
         self.token_info = Some(info);
+        self.status_line_command_tokens_changed();
     }
 
     fn context_remaining_percent(&self, info: &TokenUsageInfo) -> Option<i64> {
@@ -1167,6 +1169,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn pre_draw_tick(&mut self) {
+        self.status_line_command_pre_draw();
         self.update_due_hook_visibility();
         self.schedule_hook_timer_if_needed();
         self.bottom_pane.pre_draw_tick();
@@ -1695,6 +1698,9 @@ impl ChatWidget {
     pub(crate) fn on_terminal_resize(&mut self, width: u16) {
         let had_rendered_width = self.last_rendered_width.get().is_some();
         self.last_rendered_width.set(Some(width));
+        if self.local_settings.status_line_command.config.is_some() {
+            self.refresh_status_line();
+        }
         let stream_width = self.current_stream_width(/*reserved_cols*/ 2);
         let plan_stream_width = self.current_stream_width(/*reserved_cols*/ 4);
         if let Some(controller) = self.stream_controller.as_mut() {
@@ -2053,6 +2059,8 @@ fn has_websocket_timing_metrics(summary: RuntimeMetricsSummary) -> bool {
 
 impl Drop for ChatWidget {
     fn drop(&mut self) {
+        // Detach the task while closing its input, so it awaits owned cleanup.
+        drop(self.stop_status_line_command());
         if self.realtime_conversation.handle.is_some()
             && let Some(thread_id) = self.thread_id
         {

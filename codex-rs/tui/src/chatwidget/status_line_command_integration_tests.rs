@@ -1501,3 +1501,152 @@ mod native {
         }
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn closed_input_never_launches_unseen_initial_or_same_identity_refresh() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    for same_identity_refresh in [false, true] {
+        for stop in ["keep", "shutdown", "drop"] {
+            let mut h = Harness::new().await;
+            let starts = Arc::new(AtomicUsize::new(0));
+            let observed_starts = starts.clone();
+            // Count invocation, not future polling: even a launch immediately
+            // followed by cancellation must remain observable. Cleanup cannot hang.
+            h.chat.set_status_line_command_runner(Arc::new(move |_, _| {
+                observed_starts.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(styled("observable launch")) })
+            }));
+            h.configure(0);
+            let previous_starts = if same_identity_refresh {
+                h.pump().await;
+                assert_eq!(starts.load(Ordering::SeqCst), 1);
+                tokio::time::advance(SPACING).await;
+                let identity = h.chat.status_line_command_identity();
+                h.chat.refresh_status_line();
+                assert_eq!(h.chat.status_line_command_identity(), identity);
+                1
+            } else {
+                0
+            };
+            // No yield after the final enabled submission: the actor has not
+            // observed it when shutdown/Drop closes the watch sender.
+            assert_eq!(starts.load(Ordering::SeqCst), previous_starts);
+            match stop {
+                "keep" => {
+                    h.pump().await;
+                    assert_eq!(
+                        starts.load(Ordering::SeqCst),
+                        previous_starts + 1,
+                        "positive control: queued work must launch while input stays open"
+                    );
+                    assert_eq!(h.line(), "observable launch");
+                }
+                "shutdown" => {
+                    tokio::time::timeout(
+                        Duration::from_secs(5),
+                        h.chat.shutdown_status_line_command(),
+                    )
+                    .await
+                    .expect("an unseen submission must not delay shutdown");
+                    h.pump().await;
+                    assert_eq!(
+                        starts.load(Ordering::SeqCst),
+                        previous_starts,
+                        "shutdown must discard unseen work; refresh={same_identity_refresh}"
+                    );
+                }
+                "drop" => {
+                    drop(h.chat);
+                    settle().await;
+                    assert_eq!(
+                        starts.load(Ordering::SeqCst),
+                        previous_starts,
+                        "Drop must discard unseen work; refresh={same_identity_refresh}"
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn resize_without_draw_does_not_defer_config_or_session_cancellation() {
+    for transition in ["config", "same-thread-resume"] {
+        for active in [false, true] {
+            let mut h = Harness::new().await;
+            h.configure(0);
+            let first = h.start().await;
+            let old_width = first.request.width;
+            let mut running = if active {
+                Some(first)
+            } else {
+                h.complete(first, Ok(styled("old last good"))).await;
+                h.chat.refresh_status_line();
+                h.no_start().await; // The real scheduler now owns a 300 ms delay.
+                None
+            };
+            let old_identity = h.chat.status_line_command_identity();
+            h.chat.on_terminal_resize(40); // Deliberately do not draw yet.
+            h.pump().await;
+            assert_eq!(h.chat.status_line_command_identity(), old_identity);
+            if let Some(run) = running.as_mut() {
+                assert_eq!(
+                    run.cancelled.try_recv(),
+                    Err(oneshot::error::TryRecvError::Empty),
+                    "resize alone must preserve the in-flight run"
+                );
+            }
+            match transition {
+                "config" => {
+                    let mut replacement = command(0);
+                    replacement.config.as_mut().unwrap().command =
+                        "replacement after resize".into();
+                    h.chat.set_status_line_command_config(replacement);
+                }
+                "same-thread-resume" => resume(&mut h.chat),
+                _ => unreachable!(),
+            }
+            assert_ne!(h.chat.status_line_command_identity(), old_identity);
+            h.pump().await;
+            if let Some(mut run) = running.take() {
+                let cancellation = run.cancelled.try_recv();
+                h.no_start().await;
+                // Release cleanup before asserting so either implementation can
+                // unwind without leaving the injected runner waiting for an ack.
+                let _ = run.cleanup.send(());
+                drop(run.finish);
+                assert_eq!(
+                    cancellation,
+                    Ok(()),
+                    "old active work must cancel before a new measurement: {transition}"
+                );
+            }
+            tokio::time::advance(SPACING).await;
+            h.no_start().await;
+            assert_ne!(h.line(), "old last good");
+
+            // Positive control: once the actual renderer supplies the new width,
+            // the replacement can launch through the same real scheduler.
+            h.redraw(40);
+            let replacement = h.start().await;
+            assert!(replacement.request.width < old_width);
+            match transition {
+                "config" => assert_eq!(
+                    replacement.request.config.command,
+                    "replacement after resize"
+                ),
+                "same-thread-resume" => assert_eq!(
+                    replacement.request.payload["codex"]["thread_name"],
+                    "Synthetic resumed thread"
+                ),
+                _ => unreachable!(),
+            }
+            h.complete(replacement, Ok(styled("new measured footer")))
+                .await;
+            h.no_start().await;
+        }
+    }
+}

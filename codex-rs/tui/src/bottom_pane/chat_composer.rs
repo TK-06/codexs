@@ -594,6 +594,8 @@ impl ChatComposerConfig {
 }
 
 pub(crate) struct ChatComposer {
+    command_width_enabled: bool,
+    command_width: std::cell::Cell<Option<(u16, usize)>>,
     draft: DraftState,
     popups: PopupState,
     app_event_tx: AppEventSender,
@@ -730,6 +732,8 @@ impl ChatComposer {
             app_event_tx,
             history: ChatComposerHistory::new(),
             agents_navigation_enabled: false,
+            command_width_enabled: false,
+            command_width: std::cell::Cell::new(None),
             footer: FooterState {
                 quit_shortcut_expires_at: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
@@ -830,6 +834,38 @@ impl ChatComposer {
 
     pub(crate) fn set_frame_requester(&mut self, frame_requester: FrameRequester) {
         self.frame_requester = Some(frame_requester);
+    }
+
+    /// Enable measurement only for command footers; ordinary footer layout is unchanged.
+    pub(crate) fn observe_status_line_command_width(&mut self, enabled: bool) -> bool {
+        if self.command_width_enabled != enabled {
+            self.command_width_enabled = enabled;
+            self.command_width.set(None);
+            return true;
+        }
+        false
+    }
+
+    /// Return the last renderer-measured viewport and command-only column budget.
+    pub(crate) fn status_line_command_width(&self) -> Option<(u16, usize)> {
+        self.command_width.get()
+    }
+
+    fn record_command_width(&self, viewport: u16, width: u16, props: &FooterProps) {
+        if !self.command_width_enabled {
+            return;
+        }
+        // Let the existing footer builder account for the agent and shortcut
+        // suffixes, using an empty command as the left-hand content.
+        let mut suffix_props = props.clone();
+        suffix_props.status_line_value = Some(Line::default());
+        let suffix = passive_footer_status_line(&suffix_props).map_or(0, |line| line.width());
+        let measured = Some((viewport, usize::from(width).saturating_sub(suffix)));
+        if self.command_width.replace(measured) != measured
+            && let Some(requester) = &self.frame_requester
+        {
+            requester.schedule_frame_in(std::time::Duration::ZERO);
+        }
     }
 
     /// Records the effective reasoning tier, captures the outgoing status
@@ -4669,6 +4705,28 @@ impl ChatComposer {
                             Some(self.right_footer_line_with_context())
                         };
                     let right_width = right_line.as_ref().map(|l| l.width() as u16).unwrap_or(0);
+                    if self.status_surface_height(options) == 0 {
+                        // Capacity is the largest command the existing layout
+                        // can fit, where its normal full-to-compact mode switch
+                        // has occurred. Short lines retain their full mode hint.
+                        let capacity_right_width = if status_line_active
+                            && self.footer.side_conversation_context_label.is_none()
+                            && self.shell_mode_footer_line().is_none()
+                            && !transition_active
+                        {
+                            self.mode_indicator_line(false)
+                                .map_or(0, |line| line.width() as u16)
+                        } else {
+                            right_width
+                        };
+                        let width = if status_line_active {
+                            max_left_width_for_right(hint_rect, capacity_right_width)
+                                .unwrap_or_else(|| inset_footer_hint_area(hint_rect).width)
+                        } else {
+                            0
+                        };
+                        self.record_command_width(area.width, width, &footer_props);
+                    }
                     if status_line_active
                         && let Some(max_left) = max_left_width_for_right(hint_rect, right_width)
                         && left_width > max_left

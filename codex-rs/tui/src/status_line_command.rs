@@ -673,6 +673,27 @@ pub(crate) enum StatusLineCommandError {
     },
 }
 
+/// Refit an already sanitized styled line with the same grapheme/column rules.
+pub(crate) fn refit_status_line_command_line(
+    line: &Line<'_>,
+    width: usize,
+) -> Option<Line<'static>> {
+    if width == 0 {
+        return None;
+    }
+    let characters: Vec<_> = line
+        .spans
+        .iter()
+        .flat_map(|span| {
+            let style = line.style.patch(span.style);
+            span.content
+                .chars()
+                .map(move |character| (character, style))
+        })
+        .collect();
+    render_visible_line(&characters, width)
+}
+
 /// The TUI supplies a fresh snapshot for each requested command refresh.
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -881,9 +902,12 @@ impl StatusLineCommandScheduler {
         }
     }
 
-    #[cfg(test)]
-    fn runtime_id(&self) -> StatusLineCommandRuntimeId {
+    pub(crate) fn runtime_id(&self) -> StatusLineCommandRuntimeId {
         self.runtime
+    }
+
+    pub(crate) fn timer_epoch(&self) -> u64 {
+        self.timer_epoch
     }
 
     #[cfg(test)]

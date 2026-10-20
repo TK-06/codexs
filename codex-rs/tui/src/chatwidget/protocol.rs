@@ -87,6 +87,14 @@ impl ChatWidget {
                 self.on_thread_settings_updated(notification);
             }
             ServerNotification::TurnStarted(notification) => {
+                if replay_kind.is_none()
+                    && notification.turn.status == TurnStatus::InProgress
+                    && self
+                        .thread_id
+                        .is_some_and(|id| id.to_string() == notification.thread_id)
+                {
+                    self.status_line_command_turn_started(&notification.turn.id);
+                }
                 if from_replay {
                     self.restore_realtime_transcripts_before_turn(&notification.turn.id);
                 } else {
@@ -198,6 +206,14 @@ impl ChatWidget {
                 self.on_hook_completed(notification.run);
             }
             ServerNotification::Error(notification) => {
+                if !notification.will_retry
+                    && !from_replay
+                    && self
+                        .thread_id
+                        .is_some_and(|id| id.to_string() == notification.thread_id)
+                {
+                    self.status_line_command_turn_completed(&notification.turn_id);
+                }
                 if notification.will_retry {
                     if !from_replay {
                         self.on_stream_error(
@@ -418,6 +434,17 @@ impl ChatWidget {
         notification: TurnCompletedNotification,
         replay_kind: Option<ReplayKind>,
     ) {
+        if replay_kind.is_none()
+            && matches!(
+                notification.turn.status,
+                TurnStatus::Completed | TurnStatus::Interrupted | TurnStatus::Failed
+            )
+            && self
+                .thread_id
+                .is_some_and(|id| id.to_string() == notification.thread_id)
+        {
+            self.status_line_command_turn_completed(&notification.turn.id);
+        }
         // User-message dedupe only suppresses the app-server echo of a prompt
         // this TUI already rendered locally. Once that turn ends, another
         // client can submit the same text and it still needs its own user cell.
@@ -582,6 +609,13 @@ impl ChatWidget {
             ThreadItem::ContextCompaction { id }
                 if !matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages)) =>
             {
+                if replay_kind.is_none()
+                    && self
+                        .thread_id
+                        .is_some_and(|thread| thread.to_string() == notification.thread_id)
+                {
+                    self.status_line_command_compaction(&notification.turn_id, &id);
+                }
                 // Buffered starts reconstruct an in-flight compaction when switching tasks.
                 let elapsed = if replay_kind == Some(ReplayKind::ThreadSnapshot) {
                     let elapsed_ms = chrono::Utc::now()
