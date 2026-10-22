@@ -312,6 +312,10 @@ where
     /// of the screen.
     pub fn resize(&mut self, screen_size: Size) -> io::Result<()> {
         self.last_known_screen_size = screen_size;
+        #[cfg(test)]
+        if self.screen_size_override.is_some() {
+            self.screen_size_override = Some(screen_size);
+        }
         Ok(())
     }
 

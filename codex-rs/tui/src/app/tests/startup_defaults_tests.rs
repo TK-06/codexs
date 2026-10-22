@@ -4,6 +4,7 @@ use super::*;
 use crate::app::startup::prepare_fresh_startup_config;
 use crate::app::startup::startup_model;
 use crate::app::startup_bootstrap::bootstrap_server_owned_start;
+use color_eyre::eyre::WrapErr as _;
 use pretty_assertions::assert_eq;
 
 fn remote_target() -> AppServerTarget {
@@ -244,7 +245,8 @@ async fn run_until_thread_start(
             }
         }
     })
-    .await??;
+    .await
+    .wrap_err("startup test timed out before observing thread/start")??;
     Ok(())
 }
 
@@ -619,7 +621,9 @@ async fn fresh_startup_falls_back_only_for_unsupported_config_read() -> Result<(
             ),
             (&serde_json::Value::Null, &serde_json::Value::Null)
         );
-        tokio::time::timeout(Duration::from_secs(/*secs*/ 15), proxy).await???;
+        tokio::time::timeout(Duration::from_secs(/*secs*/ 15), proxy)
+            .await
+            .wrap_err("recording proxy did not stop after the startup future was dropped")???;
     }
     Ok(())
 }
@@ -679,7 +683,9 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
         ),
         (&serde_json::Value::Null, &serde_json::Value::Null),
     );
-    tokio::time::timeout(Duration::from_secs(/*secs*/ 15), proxy).await???;
+    tokio::time::timeout(Duration::from_secs(/*secs*/ 15), proxy)
+        .await
+        .wrap_err("recording proxy did not stop after the startup future was dropped")???;
     Ok(())
 }
 
