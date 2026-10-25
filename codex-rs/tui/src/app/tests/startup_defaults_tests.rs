@@ -250,6 +250,26 @@ async fn run_until_thread_start(
     Ok(())
 }
 
+async fn start_recording_startup_app_server(
+    config: &Config,
+    history_capabilities: HistoryCapabilities,
+    loader_overrides: LoaderOverrides,
+) -> Result<(RecordingAppServer, oneshot::Sender<()>)> {
+    let (stop_proxy, shutdown) = oneshot::channel();
+    let server = start_recording_app_server_with_shutdown(
+        config,
+        history_capabilities,
+        /*blocked_thread_list*/ None,
+        /*failed_thread_name*/ None,
+        crate::app_server_session::ThreadParamsMode::Embedded,
+        RealtimeRequestBehavior::Forward,
+        loader_overrides,
+        Some(shutdown),
+    )
+    .await?;
+    Ok((server, stop_proxy))
+}
+
 #[tokio::test]
 async fn fresh_startup_uses_server_defaults_with_explicit_and_managed_precedence() -> Result<()> {
     for (choice, managed, expected_model, expected_effort, expected_provider) in [
@@ -601,16 +621,11 @@ async fn fresh_startup_falls_back_only_for_unsupported_config_read() -> Result<(
             .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
             .build()
             .await?;
-        let (mut server, requests, proxy) = start_recording_app_server_with_history(
-            &config,
-            capabilities,
-            /*blocked_thread_list*/ None,
-            /*failed_thread_name*/ None,
-            crate::app_server_session::ThreadParamsMode::Embedded,
-            LoaderOverrides::default(),
-        )
-        .await?;
+        let ((mut server, requests, proxy), stop_proxy) =
+            start_recording_startup_app_server(&config, capabilities, LoaderOverrides::default())
+                .await?;
         let bootstrap = server.bootstrap(&config).await?;
+        let retained_client = server.request_handle();
         run_until_thread_start(server, config, bootstrap, &requests).await?;
         let starts = recorded_params(&requests, "thread/start");
         assert_eq!(starts.len(), 1);
@@ -621,9 +636,12 @@ async fn fresh_startup_falls_back_only_for_unsupported_config_read() -> Result<(
             ),
             (&serde_json::Value::Null, &serde_json::Value::Null)
         );
+        // Proxy cleanup must not depend on all client request handles being dropped.
+        let _ = stop_proxy.send(());
         tokio::time::timeout(Duration::from_secs(/*secs*/ 15), proxy)
             .await
-            .wrap_err("recording proxy did not stop after the startup future was dropped")???;
+            .wrap_err("recording proxy did not finish explicit shutdown")???;
+        drop(retained_client);
     }
     Ok(())
 }
@@ -648,12 +666,9 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
     let mut server_config = config.clone();
     server_config.codex_home = server_home.path().to_path_buf().abs();
     server_config.sqlite = SqliteConfig::new_for_testing(server_home.path().abs());
-    let (mut server, requests, proxy) = start_recording_app_server_with_history(
+    let ((mut server, requests, proxy), stop_proxy) = start_recording_startup_app_server(
         &server_config,
         HistoryCapabilities::Current,
-        /*blocked_thread_list*/ None,
-        /*failed_thread_name*/ None,
-        crate::app_server_session::ThreadParamsMode::Embedded,
         LoaderOverrides {
             user_config_path: Some(server_home.path().join("config.toml").abs()),
             ..LoaderOverrides::default()
@@ -661,6 +676,7 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
     )
     .await?;
     let bootstrap = server.bootstrap(&config).await?;
+    let retained_client = server.request_handle();
     run_until_thread_start(server, config, bootstrap, &requests).await?;
     {
         let recorded = requests.lock().expect("request recorder lock");
@@ -683,9 +699,11 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
         ),
         (&serde_json::Value::Null, &serde_json::Value::Null),
     );
+    let _ = stop_proxy.send(());
     tokio::time::timeout(Duration::from_secs(/*secs*/ 15), proxy)
         .await
-        .wrap_err("recording proxy did not stop after the startup future was dropped")???;
+        .wrap_err("recording proxy did not finish explicit shutdown")???;
+    drop(retained_client);
     Ok(())
 }
 
