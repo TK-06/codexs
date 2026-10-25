@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: 'integration runs full/baseline/build; triage compares eleven existing failures serially on both revisions'
+        description: 'triage-current checks current source; triage compares with baseline; integration runs full/baseline/build'
         required: true
         type: choice
         default: feature
-        options: [feature, full, baseline, build, integration, triage]
+        options: [feature, full, baseline, build, integration, triage, triage-current]
 
 permissions:
   contents: read
@@ -42,6 +42,7 @@ jobs:
           elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
             if ($env:REQUESTED_SCOPE -ceq 'integration') { $scopes = @('full', 'baseline', 'build') }
             elseif ($env:REQUESTED_SCOPE -ceq 'triage') { $scopes = @('triage-full', 'triage-baseline') }
+            elseif ($env:REQUESTED_SCOPE -ceq 'triage-current') { $scopes = @('triage-full') }
             elseif ($env:REQUESTED_SCOPE -cin @('feature', 'full', 'baseline', 'build')) { $scopes = @($env:REQUESTED_SCOPE) }
             else { throw "Unsupported scope: $env:REQUESTED_SCOPE" }
           } else { throw "Unsupported event: $env:GITHUB_EVENT_NAME" }
@@ -128,6 +129,7 @@ jobs:
               @{name='manual full'; event='workflow_dispatch'; request='full'; want=@('full')},
               @{name='manual baseline'; event='workflow_dispatch'; request='baseline'; want=@('baseline')},
               @{name='manual build'; event='workflow_dispatch'; request='build'; want=@('build')},
+              @{name='triage-current checks only the current revision'; event='workflow_dispatch'; request='triage-current'; want=@('triage-full')},
               @{name='triage compares both revisions serially'; event='workflow_dispatch'; request='triage'; want=@('triage-full','triage-baseline')},
               @{name='integration expands three independent scopes'; event='workflow_dispatch'; request='integration'; want=@('full','baseline','build')}
           )) {
