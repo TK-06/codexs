@@ -178,14 +178,14 @@ pub(crate) fn new_session_info(
     is_first_event: bool,
     tooltip_override: Option<String>,
     auth_plan: Option<PlanType>,
-    _client_version: &'static str,
+    client_version: &'static str,
 ) -> SessionInfoCell {
     // Header rendered as history (so it appears at the very top).
     let header = SessionHeaderHistoryCell::new(
         model_display_name.to_string(),
         session.reasoning_effort.clone(),
         config.cwd.to_path_buf(),
-        CODEX_CLI_VERSION,
+        client_version,
     )
     .with_yolo_mode(has_yolo_permissions(
         session.approval_policy,

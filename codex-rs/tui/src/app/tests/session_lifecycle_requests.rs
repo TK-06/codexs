@@ -3011,7 +3011,7 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
             /*is_first_event*/ false,
             Some("This is a test announcement".to_string()),
             /*auth_plan*/ None,
-            crate::version::CODEX_CLI_VERSION,
+            "0.0.0",
         )),
     );
     app.enqueue_primary_thread_session(started.session, started.turns)
@@ -4362,7 +4362,10 @@ async fn changing_directory_preserves_project_trust_permissions_history_and_hook
             .await;
         assert_eq!(
             recorded_params(&requests, "thread/backgroundTerminals/list"),
-            vec![json!({"threadId": original.to_string(), "cursor": null, "limit": 1})],
+            vec![
+                json!({"threadId": original.to_string(), "cursor": null, "limit": 1}),
+                json!({"threadId": original.to_string(), "cursor": null, "limit": 1}),
+            ],
         );
         let output = history().join("");
         insta::allow_duplicates! {

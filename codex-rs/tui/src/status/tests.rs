@@ -793,7 +793,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
-        crate::version::CODEX_CLI_VERSION,
+        "0.0.0",
     );
     let rendered =
         sanitize_directory(render_lines(&composite.display_lines(/*width*/ 120))).join("\n");
@@ -825,7 +825,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
-        crate::version::CODEX_CLI_VERSION,
+        "0.0.0",
     );
     let rendered =
         sanitize_directory(render_lines(&composite.display_lines(/*width*/ 120))).join("\n");
@@ -1516,7 +1516,7 @@ async fn status_wraps_long_paths_and_session_ids_without_losing_text() {
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
-        crate::version::CODEX_CLI_VERSION,
+        "0.0.0",
     );
     let directory = directory.to_string_lossy();
     for width in [7, 12, 17, 18, 24, 25, 40, 80] {
@@ -1755,7 +1755,7 @@ async fn status_snapshot_uses_default_reasoning_when_config_empty() {
             /*reasoning_effort_override*/ Some(Some(ReasoningEffort::Medium)),
             "<none>".to_string(),
             /*refreshing_rate_limits*/ false,
-            crate::version::CODEX_CLI_VERSION,
+            "0.0.0",
         );
         let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
         if cfg!(windows) {
@@ -1868,7 +1868,7 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ true,
-        crate::version::CODEX_CLI_VERSION,
+        "0.0.0",
     );
     let mut overlay =
         TranscriptOverlay::new(vec![Arc::new(status)], RuntimeKeymap::defaults().pager);

@@ -218,7 +218,7 @@ impl ChatWidget {
                 self.show_welcome_banner,
                 startup_tooltip_override,
                 self.plan_type,
-                crate::version::CODEX_CLI_VERSION,
+                self.client_version,
             );
             self.apply_session_info_cell(session_info_cell);
         } else if self

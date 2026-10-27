@@ -447,9 +447,14 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
     // the directory also releases it if the test fails before reaching the exit.
     let running = tempdir()?;
     let running_path = running.path().to_string_lossy();
+    // This owned marker distinguishes script entry from stdout readiness on failure.
+    let readiness_script_marker = running.path().join("started");
     let command = if cfg!(windows) {
         format!(
-            "Write-Output 'exit-test-ready'; while (Test-Path -LiteralPath '{}') {{ Start-Sleep -Milliseconds 100 }}",
+            "[System.IO.File]::WriteAllText('{}', 'started'); [Console]::Out.WriteLine('exit-test-ready'); [Console]::Out.Flush(); while (Test-Path -LiteralPath '{}') {{ Start-Sleep -Milliseconds 100 }}",
+            readiness_script_marker
+                .to_string_lossy()
+                .replace('\'', "''"),
             running_path.replace('\'', "''"),
         )
     } else {
@@ -513,10 +518,12 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
     })
     .await;
     let turn_id = readiness_result.unwrap_or_else(|error| {
+        let script_started = cfg!(windows).then(|| readiness_script_marker.is_file());
         panic!(
             "shell command should be running before interruption: {error}; \
              events={readiness_events} turn_started={readiness_turn_started} \
-             command_started={readiness_command_started} output_bytes={readiness_output_bytes}"
+             command_started={readiness_command_started} output_bytes={readiness_output_bytes} \
+             script_started={script_started:?}"
         )
     });
     app.thread_event_channels.insert(

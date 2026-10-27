@@ -214,6 +214,29 @@ jobs:
               }
           }
           '@ -OutputAssembly $fakeExe -OutputType ConsoleApplication
+          $fakeCodex = Join-Path $fakeBin 'codex.exe'
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.IO;
+          public static class CodexsVersionBoundaryProbe {
+              public static int Main(string[] args) {
+                  File.WriteAllLines(Environment.GetEnvironmentVariable("CODEXS_PROBE_VERSION_ARGS"), args);
+                  if (Environment.GetEnvironmentVariable("CODEXS_PROBE_VERSION_EMPTY") != "1") {
+                      Console.WriteLine(Environment.GetEnvironmentVariable("CODEXS_PROBE_VERSION_TEXT") ?? "codex-cli 0.162.1");
+                  }
+                  return int.Parse(Environment.GetEnvironmentVariable("CODEXS_PROBE_VERSION_EXIT") ?? "0");
+              }
+          }
+          '@ -OutputAssembly $fakeCodex -OutputType ConsoleApplication
+          $defaultTarget = Join-Path $probeRoot 'target'
+          $defaultRelease = Join-Path $defaultTarget 'release'
+          New-Item -ItemType Directory -Path $defaultRelease | Out-Null
+          Copy-Item -LiteralPath $fakeCodex -Destination (Join-Path $defaultRelease 'codex.exe')
+          $env:CARGO_TARGET_DIR = $defaultTarget
+          $env:CODEXS_PROBE_VERSION_ARGS = Join-Path $probeRoot 'default-version.args'
+          $env:CODEXS_PROBE_VERSION_TEXT = 'codex-cli 0.162.1'
+          $env:CODEXS_PROBE_VERSION_EXIT = '0'
+          $env:CODEXS_PROBE_VERSION_EMPTY = '0'
           $env:PATH = $fakeBin + ';' + $env:PATH
           if ((Get-Command rustup.exe -ErrorAction Stop).Source -cne $fakeExe) { throw 'Native probe executable did not resolve; refusing to run Rust' }
           $native = StepScript 'Run guarded native Cargo operation'
@@ -281,6 +304,7 @@ jobs:
                       $stopPath = Join-Path $probeRoot ($id + '.stop')
                       $resultPath = Join-Path $probeRoot ($id + '.outcome')
                       $wrapperProblem = $null
+                      $runnerErrorPath = Join-Path $probeRoot ($id + '.absent-error')
                       $env:CODEXS_SCOPE = $scope
                       $env:CODEXS_SOURCE_SHA = 'a' * 40
                       $env:GITHUB_STEP_SUMMARY = ''
@@ -303,6 +327,7 @@ jobs:
                       $stopPath = Join-Path $probeRoot ($id + '.stop')
                       $resultPath = Join-Path $probeRoot ($id + '.outcome')
                       $wrapperProblem = $null
+                      $runnerErrorPath = Join-Path $probeRoot ($id + '.absent-error')
                       $env:CODEXS_SCOPE = $scope
                       $env:CODEXS_SOURCE_SHA = 'a' * 40
                       $env:GITHUB_STEP_SUMMARY = ''
@@ -311,6 +336,87 @@ jobs:
                       $rejected = $false
                       try { & ([scriptblock]::Create($summary)) | Out-Null } catch { $rejected = $true }
                       Equal $rejected ($count -ne 11)
+                  }
+              }
+          }
+          foreach ($hasRunnerError in @($false,$true)) {
+              Check "build summary rejects runner error=$hasRunnerError despite Cargo exit 0" {
+                  $id = [guid]::NewGuid().ToString('N')
+                  $outPath = Join-Path $probeRoot ($id + '.log')
+                  $exitPath = Join-Path $probeRoot ($id + '.exit')
+                  $stopPath = Join-Path $probeRoot ($id + '.stop')
+                  $resultPath = Join-Path $probeRoot ($id + '.outcome')
+                  $runnerErrorPath = Join-Path $probeRoot ($id + '.error')
+                  $wrapperProblem = $null
+                  $env:CODEXS_SCOPE = 'build'
+                  $env:CODEXS_SOURCE_SHA = 'a' * 40
+                  $env:GITHUB_STEP_SUMMARY = ''
+                  'synthetic successful Cargo build' | Out-File -LiteralPath $outPath -Encoding utf8
+                  '0' | Out-File -LiteralPath $exitPath -Encoding ascii
+                  if ($hasRunnerError) { 'RUNNER_SETUP_FAILURE synthetic version rejection' | Out-File -LiteralPath $runnerErrorPath -Encoding utf8 }
+                  $rejected = $false
+                  try { & ([scriptblock]::Create($summary)) | Out-Null } catch { $rejected = $true }
+                  Equal $rejected $hasRunnerError
+              }
+          }
+          foreach ($case in @(
+              @{name='correct package version'; text='codex-cli 0.162.1'; empty='0'; versionExit=0; missing=$false; want=0},
+              @{name='wrong development version'; text='codex-cli 0.0.0'; empty='0'; versionExit=0; missing=$false; want=251},
+              @{name='empty version output'; text=''; empty='1'; versionExit=0; missing=$false; want=251},
+              @{name='nonzero version exit'; text='codex-cli 0.162.1'; empty='0'; versionExit=7; missing=$false; want=251},
+              @{name='missing built binary'; text='codex-cli 0.162.1'; empty='0'; versionExit=0; missing=$true; want=251}
+          )) {
+              Check "build validates $($case.name) through the native version boundary" {
+                  $id = [guid]::NewGuid().ToString('N')
+                  $env:CARGO_TARGET_DIR = Join-Path $probeRoot ($id + '.target')
+                  try {
+                      $release = Join-Path $env:CARGO_TARGET_DIR 'release'
+                      New-Item -ItemType Directory -Path $release | Out-Null
+                      if (-not $case.missing) { Copy-Item -LiteralPath $fakeCodex -Destination (Join-Path $release 'codex.exe') }
+                      $env:CODEXS_PROBE_ARGS = Join-Path $probeRoot ($id + '.cargo-args')
+                      $env:CODEXS_PROBE_EXIT = '0'
+                      $env:CODEXS_PROBE_VERSION_ARGS = Join-Path $probeRoot ($id + '.version-args')
+                      $env:CODEXS_PROBE_VERSION_TEXT = $case.text
+                      $env:CODEXS_PROBE_VERSION_EXIT = "$($case.versionExit)"
+                      $env:CODEXS_PROBE_VERSION_EMPTY = $case.empty
+                      $statePath = Join-Path $probeRoot ($id + '.json')
+                      $state = @{
+                          workdir=$probeRoot; scope='build'; source_sha=('a' * 40)
+                          cargo_log=(Join-Path $probeRoot ($id + '.log'))
+                          native_exit=(Join-Path $probeRoot ($id + '.exit'))
+                          runner_error=(Join-Path $probeRoot ($id + '.error'))
+                      }
+                      $state | ConvertTo-Json | Out-File -LiteralPath $statePath -Encoding utf8
+                      $env:CODEXS_GUARD_STATE = $statePath
+                      $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$ProgressPreference = 'SilentlyContinue'`n" + $runner))
+                      & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded > $null 2> (Join-Path $probeRoot ($id + '.stderr'))
+                      $exitCode = $LASTEXITCODE
+                      Equal $exitCode $case.want
+                      Equal (Get-Content -LiteralPath $state.native_exit) '0'
+                      Equal (Test-Path -LiteralPath $state.runner_error) ($case.want -ne 0)
+                      if (-not $case.missing) {
+                          Equal (Test-Path -LiteralPath $env:CODEXS_PROBE_VERSION_ARGS) $true
+                          Equal @(Get-Content -LiteralPath $env:CODEXS_PROBE_VERSION_ARGS) @('--version')
+                      }
+                      else { Equal (Test-Path -LiteralPath $env:CODEXS_PROBE_VERSION_ARGS) $false }
+                      $outPath = $state.cargo_log
+                      $exitPath = $state.native_exit
+                      $stopPath = Join-Path $probeRoot ($id + '.stop')
+                      $resultPath = Join-Path $probeRoot ($id + '.outcome')
+                      $runnerErrorPath = $state.runner_error
+                      $wrapperProblem = $null
+                      $env:CODEXS_SCOPE = 'build'
+                      $env:CODEXS_SOURCE_SHA = 'a' * 40
+                      $env:GITHUB_STEP_SUMMARY = ''
+                      $rejected = $false
+                      try { & ([scriptblock]::Create($summary)) | Out-Null } catch { $rejected = $true }
+                      Equal $rejected ($case.want -ne 0)
+                  } finally {
+                      $env:CARGO_TARGET_DIR = $defaultTarget
+                      $env:CODEXS_PROBE_VERSION_ARGS = Join-Path $probeRoot 'default-version.args'
+                      $env:CODEXS_PROBE_VERSION_TEXT = 'codex-cli 0.162.1'
+                      $env:CODEXS_PROBE_VERSION_EXIT = '0'
+                      $env:CODEXS_PROBE_VERSION_EMPTY = '0'
                   }
               }
           }
@@ -448,6 +554,7 @@ jobs:
           $stopPath = Join-Path $logDir 'guard.stop'
           $outPath = Join-Path $logDir 'cargo.log'
           $exitPath = Join-Path $logDir 'native-exit.txt'
+          $runnerErrorPath = Join-Path $logDir 'runner-error.txt'
           $resultPath = Join-Path $logDir 'outcome.txt'
           $runnerSource = @'
           $ErrorActionPreference = 'Stop'
@@ -492,6 +599,21 @@ jobs:
             $ErrorActionPreference = 'Stop'
             if ($null -eq $nativeExit) { throw 'Native Cargo exit code was unavailable' }
             $nativeExit | Out-File -LiteralPath $state.native_exit -Encoding ascii
+            if ($state.scope -eq 'build' -and $nativeExit -eq 0) {
+              $binary = Join-Path $env:CARGO_TARGET_DIR 'release/codex.exe'
+              if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'Built CLI binary was unavailable for version validation' }
+              $LASTEXITCODE = $null
+              $ErrorActionPreference = 'Continue'
+              $versionOutput = @(& $binary --version 2>&1)
+              $versionExit = $LASTEXITCODE
+              $ErrorActionPreference = 'Stop'
+              $versionLines = @($versionOutput | ForEach-Object { "$_" })
+              $versionLog = "cli_version_exit=$versionExit output=$($versionLines -join ' | ')"
+              Write-Host $versionLog
+              $versionLog | Out-File -LiteralPath $state.cargo_log -Encoding utf8 -Append
+              if ($null -eq $versionExit -or $versionExit -ne 0 -or $versionLines.Count -ne 1 -or
+                  $versionLines[0] -cnotmatch '^codex(?:-cli)? 0\.162\.1$') { throw 'Built CLI version validation failed' }
+            }
             exit $nativeExit
           } catch {
             "RUNNER_SETUP_FAILURE $($_.Exception.Message)" | Out-File -LiteralPath $state.runner_error -Encoding utf8
@@ -812,7 +934,7 @@ jobs:
             owner_pid=$PID; owner_ticks=$ownerTicks; drives=$roots; workdir=(Get-Location).Path
             guard_log=$guardLog; ready_path=$readyPath; request_path=$requestPath; started_path=$startedPath
             done_path=$donePath; stop_path=$stopPath; runner_path=$runnerPath; cargo_log=$outPath
-            native_exit=$exitPath; runner_error=(Join-Path $logDir 'runner-error.txt')
+            native_exit=$exitPath; runner_error=$runnerErrorPath
             scope=$env:CODEXS_SCOPE; source_sha=$env:CODEXS_SOURCE_SHA
           }
           $state | ConvertTo-Json -Compress | Out-File -LiteralPath $statePath -Encoding utf8
@@ -866,6 +988,9 @@ jobs:
             }
           }
           $lines = if (Test-Path -LiteralPath $outPath) { @(Get-Content -LiteralPath $outPath) } else { @() }
+          if ($runnerErrorPath -and (Test-Path -LiteralPath $runnerErrorPath)) {
+            $wrapperProblem += " runner_error=$((Get-Content -LiteralPath $runnerErrorPath -Raw).Trim());"
+          }
           $resultLines = @($lines | Where-Object { $_ -match '^test result: (ok|FAILED)\.\s+(\d+) passed;\s+(\d+) failed;\s+(\d+) ignored' })
           $passed = 0; $failed = 0; $ignored = 0
           foreach ($line in $resultLines) {

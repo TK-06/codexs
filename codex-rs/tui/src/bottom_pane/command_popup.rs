@@ -299,6 +299,16 @@ impl CommandPopup {
     }
 }
 
+#[cfg(test)]
+pub(super) fn include_debug_commands_for_snapshot(popup: &mut CommandPopup) {
+    for command in [SlashCommand::Rollout, SlashCommand::TestApproval] {
+        let item = CommandItem::Builtin(command);
+        if !popup.commands.contains(&item) {
+            popup.commands.push(item);
+        }
+    }
+}
+
 impl CommandItem {
     pub(crate) fn command(&self) -> &str {
         match self {

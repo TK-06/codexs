@@ -1507,13 +1507,21 @@ impl ChatWidget {
     }
 
     /// Build a placeholder header cell while the session is configuring.
+    #[cfg(test)]
     fn placeholder_session_header_cell(config: &Config) -> Box<dyn HistoryCell> {
+        Self::placeholder_session_header_cell_with_version(config, CODEX_CLI_VERSION)
+    }
+
+    fn placeholder_session_header_cell_with_version(
+        config: &Config,
+        client_version: &'static str,
+    ) -> Box<dyn HistoryCell> {
         Box::new(
             history_cell::SessionHeaderHistoryCell::new(
                 DEFAULT_MODEL_DISPLAY_NAME.to_string(),
                 /*reasoning_effort*/ None,
                 config.cwd.to_path_buf(),
-                CODEX_CLI_VERSION,
+                client_version,
             )
             .with_yolo_mode(history_cell::is_yolo_mode(config)),
         )

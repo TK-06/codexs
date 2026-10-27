@@ -750,7 +750,7 @@ fn set_test_initial_prompt(app: &mut App, initial_prompt: String) {
     let config = app.config.clone();
     let model = get_model_offline_for_tests(config.model.as_deref());
     app.chat_widget = ChatWidget::new_with_app_event(ChatWidgetInit {
-        client_version: crate::version::CODEX_CLI_VERSION,
+        client_version: "0.0.0",
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&config),
         config,
@@ -6000,7 +6000,7 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
             is_first,
             /*tooltip_override*/ None,
             /*auth_plan*/ None,
-            crate::version::CODEX_CLI_VERSION,
+            "0.0.0",
         )) as Arc<dyn HistoryCell>
     };
 
@@ -6131,7 +6131,7 @@ async fn make_test_app() -> Box<App> {
     let session_telemetry = test_session_telemetry(&config, model.as_str());
 
     Box::new(App {
-        client_version: crate::version::CODEX_CLI_VERSION,
+        client_version: "0.0.0",
         feature_write_lock: Arc::default(),
         model_catalog: chat_widget.model_catalog(),
         session_telemetry,
@@ -6252,7 +6252,7 @@ pub(super) async fn make_test_app_with_channels() -> (
 
     (
         Box::new(App {
-            client_version: crate::version::CODEX_CLI_VERSION,
+            client_version: "0.0.0",
             feature_write_lock: Arc::default(),
             model_catalog: chat_widget.model_catalog(),
             session_telemetry,
@@ -7719,7 +7719,7 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
             is_first,
             /*tooltip_override*/ None,
             /*auth_plan*/ None,
-            crate::version::CODEX_CLI_VERSION,
+            "0.0.0",
         )) as Arc<dyn HistoryCell>
     };
 
@@ -8909,7 +8909,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
     );
 
     let replacement = ChatWidget::new_with_app_event(ChatWidgetInit {
-        client_version: crate::version::CODEX_CLI_VERSION,
+        client_version: "0.0.0",
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&app.config),
         config: app.config.clone(),

@@ -821,7 +821,7 @@ impl App {
         initial_user_message: Option<crate::chatwidget::UserMessage>,
     ) -> crate::chatwidget::ChatWidgetInit {
         crate::chatwidget::ChatWidgetInit {
-            client_version: crate::version::CODEX_CLI_VERSION,
+            client_version: self.client_version,
             local_settings: self.local_settings.clone(),
             config: cfg,
             frame_requester: tui.frame_requester(),

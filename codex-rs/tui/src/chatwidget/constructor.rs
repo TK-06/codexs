@@ -65,7 +65,7 @@ impl ChatWidget {
         };
 
         let empty_state_animation = crate::empty_state_animation::EmptyStateAnimation::default();
-        let header = Self::placeholder_session_header_cell(&config);
+        let header = Self::placeholder_session_header_cell_with_version(&config, client_version);
         let active_cell = Some(header);
 
         let current_cwd = Some(config.cwd.to_path_buf());

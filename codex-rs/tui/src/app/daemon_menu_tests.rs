@@ -121,7 +121,7 @@ async fn daemon_menu_is_read_only_and_confirmation_can_cancel_or_handoff() {
             })
             .unwrap(),
         );
-        app.confirm_daemon_update(source);
+        app.confirm_daemon_update_with_version(source, Some("0.0.0"));
         insta::assert_snapshot!(
             snapshot,
             render_bottom_popup(&app.chat_widget, width)

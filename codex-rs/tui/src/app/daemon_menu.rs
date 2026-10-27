@@ -86,6 +86,14 @@ impl App {
     }
 
     pub(super) fn confirm_daemon_update(&mut self, source: DaemonUpdateSource) {
+        self.confirm_daemon_update_with_version(source, None);
+    }
+
+    fn confirm_daemon_update_with_version(
+        &mut self,
+        source: DaemonUpdateSource,
+        current_version: Option<&str>,
+    ) {
         let Some(executable) = &self.daemon_cli_executable else {
             return;
         };
@@ -95,9 +103,11 @@ impl App {
         let mut explanation = match source {
             DaemonUpdateSource::PublicStable => "Install the latest public stable release. Restore production updates; keep your automatic-update setting.".to_string(),
             DaemonUpdateSource::ThisCli => {
-                let version = codex_install_context::InstallContext::current()
-                    .package_manifest()
-                    .map_or_else(|| CODEX_CLI_VERSION.to_string(), |manifest| manifest.version.to_string());
+                let version = current_version.map(str::to_owned).unwrap_or_else(|| {
+                    codex_install_context::InstallContext::current()
+                        .package_manifest()
+                        .map_or_else(|| CODEX_CLI_VERSION.to_string(), |manifest| manifest.version.to_string())
+                });
                 format!("Use this CLI package v{version} from {}. Copy the complete package and pin it against automatic updates.", executable.display())
             }
         };

@@ -260,7 +260,7 @@ impl ChatWidget {
             reasoning_effort_override,
             agents_summary,
             refreshing_rate_limits,
-            crate::version::CODEX_CLI_VERSION,
+            self.client_version,
         );
         if let Some(request_id) = request_id {
             self.refreshing_status_outputs

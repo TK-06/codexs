@@ -23,6 +23,20 @@ use crate::resume_picker::SessionSelection;
 use crate::tui::FrameRequester;
 use crate::tui::TuiEvent;
 
+fn fixture_startup_session_header(
+    cwd: Option<&std::path::Path>,
+) -> Box<dyn crate::history_cell::HistoryCell> {
+    Box::new(crate::history_cell::SessionHeaderHistoryCell::new(
+        "loading".to_string(),
+        /*reasoning_effort*/ None,
+        cwd.map_or_else(
+            || std::path::PathBuf::from("loading"),
+            std::path::Path::to_path_buf,
+        ),
+        "0.0.0",
+    ))
+}
+
 fn startup_test_pump<I>(events: I) -> StartupDraftPump
 where
     I: Iterator<Item = TuiEvent> + Send + 'static,
@@ -30,7 +44,7 @@ where
     let (tx, rx) = unbounded_channel();
     let mut blossom = crate::empty_state_animation::EmptyStateAnimation::default();
     blossom.start_fresh();
-    let header = startup_session_header(/*cwd*/ None);
+    let header = fixture_startup_session_header(/*cwd*/ None);
     StartupDraftPump {
         header,
         blossom: std::cell::RefCell::new(blossom),
@@ -95,7 +109,7 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
         let mut pump = startup_test_pump(std::iter::empty());
         pump.session_action = session_action;
         if label == "configured" {
-            pump.header = startup_session_header(Some(std::path::Path::new("workspace")));
+            pump.header = fixture_startup_session_header(Some(std::path::Path::new("workspace")));
         }
         pump.bottom_pane
             .set_composer_text(text.to_string(), Vec::new(), Vec::new());
@@ -132,7 +146,7 @@ fn startup_draft_renders_full_empty_and_multiline_composer_frames() {
             })
             .collect::<Vec<_>>()
             .join("\n")
-            .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>");
+            .replace("0.0.0", "<VERSION>");
 
         assert!(
             cursor.1 >= pump.header.desired_height(width),
@@ -195,9 +209,7 @@ fn terminal_app_ssh_fallback_renders_inline_startup() {
     }
     insta::assert_snapshot!(
         "terminal_app_ssh_startup",
-        frames
-            .join("\n---\n")
-            .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>")
+        frames.join("\n---\n").replace("0.0.0", "<VERSION>")
     );
 }
 
@@ -226,7 +238,7 @@ async fn startup_draft_clears_loading_status_when_starting_fresh() {
             })
             .collect::<Vec<_>>()
             .join("\n")
-            .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>")
+            .replace("0.0.0", "<VERSION>")
     };
 
     for (label, initial_screen, session_action) in [
@@ -797,7 +809,7 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
         })
         .collect::<Vec<_>>()
         .join("\n")
-        .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>");
+        .replace("0.0.0", "<VERSION>");
     drop(renderable);
     frames.push_str(&format!("\n---\nafter onboarding:\n{visible_frame}"));
     insta::assert_snapshot!("startup_draft_onboarding_transition", frames);
