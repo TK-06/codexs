@@ -747,6 +747,7 @@ async fn session_info_uses_availability_nux_tooltip_override() {
         /*is_first_event*/ false,
         Some("Model just became available".to_string()),
         Some(PlanType::Free),
+        crate::version::CODEX_CLI_VERSION,
     );
 
     let rendered = render_transcript(&cell).join("\n");
@@ -770,6 +771,7 @@ async fn session_info_availability_nux_tooltip_snapshot() {
         /*is_first_event*/ false,
         Some("Model just became available".to_string()),
         Some(PlanType::Free),
+        crate::version::CODEX_CLI_VERSION,
     );
 
     let rendered = render_transcript(&cell).join("\n");
@@ -791,6 +793,7 @@ async fn session_info_preserves_styled_tooltip_links() {
                 .to_string(),
         ),
         Some(PlanType::Free),
+        crate::version::CODEX_CLI_VERSION,
     );
 
     let lines = cell.transcript_hyperlink_lines(/*width*/ 30);
@@ -840,6 +843,7 @@ async fn session_info_first_event_suppresses_tooltips_and_nux() {
         /*is_first_event*/ true,
         Some("Model just became available".to_string()),
         Some(PlanType::Free),
+        crate::version::CODEX_CLI_VERSION,
     );
 
     let rendered = render_transcript(&cell).join("\n");
@@ -860,6 +864,7 @@ async fn session_info_hides_tooltips_when_disabled() {
         /*is_first_event*/ false,
         Some("Model just became available".to_string()),
         Some(PlanType::Free),
+        crate::version::CODEX_CLI_VERSION,
     );
 
     let rendered = render_transcript(&cell).join("\n");
@@ -3209,4 +3214,20 @@ fn consolidation_walker_replaces_agent_message_cells() {
         transcript_cells[1].as_any().is::<AgentMarkdownCell>(),
         "second cell should be AgentMarkdownCell"
     );
+}
+
+#[test]
+fn status_line_command_release_notice_uses_package_version() {
+    let actual =
+        UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::StandaloneWindows));
+    let rendered = render_lines(&actual.display_lines(110)).join("\n");
+    assert!(rendered.contains(env!("CARGO_PKG_VERSION")), "{rendered}");
+
+    let fixture = UpdateAvailableHistoryCell::new_with_current_version(
+        "7.8.9",
+        "9.9.9".to_string(),
+        Some(UpdateAction::StandaloneWindows),
+    );
+    let rendered = render_lines(&fixture.display_lines(110)).join("\n");
+    assert!(rendered.contains("7.8.9 -> 9.9.9"), "{rendered}");
 }

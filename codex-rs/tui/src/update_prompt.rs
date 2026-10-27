@@ -302,6 +302,21 @@ mod tests {
     }
 
     #[test]
+    fn status_line_command_release_update_prompt_uses_package_version() {
+        let screen = UpdatePromptScreen::new(
+            FrameRequester::test_dummy(),
+            "9.9.9".into(),
+            UpdateAction::NpmGlobalLatest,
+        );
+        let mut terminal = Terminal::new(VT100Backend::new(80, 12)).expect("terminal");
+        terminal
+            .draw(|frame| frame.render_widget_ref(&screen, frame.area()))
+            .expect("render release update prompt");
+        let rendered = terminal.backend().to_string();
+        assert!(rendered.contains(env!("CARGO_PKG_VERSION")), "{rendered}");
+    }
+
+    #[test]
     fn update_prompt_confirm_selects_update() {
         let mut screen = new_prompt();
         screen.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));

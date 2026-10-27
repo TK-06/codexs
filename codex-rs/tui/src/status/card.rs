@@ -215,6 +215,7 @@ pub(crate) fn new_status_output_with_rate_limits(
         reasoning_effort_override,
         "<none>".to_string(),
         refreshing_rate_limits,
+        crate::version::CODEX_CLI_VERSION,
     )
     .0
 }
@@ -239,6 +240,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
     reasoning_effort_override: Option<Option<ReasoningEffort>>,
     agents_summary: String,
     refreshing_rate_limits: bool,
+    client_version: &'static str,
 ) -> (CompositeHistoryCell, StatusHistoryHandle) {
     let command = PlainHistoryCell::new(vec!["/status".magenta().into()]);
     let card = Arc::new(StatusHistoryCell::new(
@@ -260,6 +262,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
         reasoning_effort_override,
         agents_summary,
         refreshing_rate_limits,
+        client_version,
     ));
     let handle = StatusHistoryHandle {
         card: Arc::clone(&card),
@@ -292,6 +295,7 @@ impl StatusHistoryCell {
         reasoning_effort_override: Option<Option<ReasoningEffort>>,
         agents_summary: String,
         refreshing_rate_limits: bool,
+        _client_version: &'static str,
     ) -> Self {
         let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
         let permission_profile = config.permissions.effective_permission_profile();

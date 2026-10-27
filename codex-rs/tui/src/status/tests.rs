@@ -793,6 +793,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
+        crate::version::CODEX_CLI_VERSION,
     );
     let rendered =
         sanitize_directory(render_lines(&composite.display_lines(/*width*/ 120))).join("\n");
@@ -824,6 +825,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
+        crate::version::CODEX_CLI_VERSION,
     );
     let rendered =
         sanitize_directory(render_lines(&composite.display_lines(/*width*/ 120))).join("\n");
@@ -1514,6 +1516,7 @@ async fn status_wraps_long_paths_and_session_ids_without_losing_text() {
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ false,
+        crate::version::CODEX_CLI_VERSION,
     );
     let directory = directory.to_string_lossy();
     for width in [7, 12, 17, 18, 24, 25, 40, 80] {
@@ -1752,6 +1755,7 @@ async fn status_snapshot_uses_default_reasoning_when_config_empty() {
             /*reasoning_effort_override*/ Some(Some(ReasoningEffort::Medium)),
             "<none>".to_string(),
             /*refreshing_rate_limits*/ false,
+            crate::version::CODEX_CLI_VERSION,
         );
         let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
         if cfg!(windows) {
@@ -1864,6 +1868,7 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
         /*reasoning_effort_override*/ None,
         "<none>".to_string(),
         /*refreshing_rate_limits*/ true,
+        crate::version::CODEX_CLI_VERSION,
     );
     let mut overlay =
         TranscriptOverlay::new(vec![Arc::new(status)], RuntimeKeymap::defaults().pager);
@@ -2507,4 +2512,38 @@ fn status_line_command_preserves_epoch_and_negative_second_resets() {
     assert_eq!(secondary.resets_at_unix, Some(-1));
     assert!(primary.resets_at.is_some());
     assert!(secondary.resets_at.is_some());
+}
+
+#[tokio::test]
+async fn status_line_command_status_version_is_supplied_before_layout() {
+    let temp_home = TempDir::new().expect("synthetic home");
+    let config = test_config(&temp_home).await;
+    let usage = TokenUsage::default();
+    let (status, _handle) = new_status_output_with_rate_limits_handle(
+        &config,
+        false,
+        None,
+        None,
+        None,
+        None,
+        &usage,
+        &None,
+        None,
+        None,
+        &[],
+        None,
+        Local::now(),
+        "synthetic-model",
+        None,
+        None,
+        "<none>".to_string(),
+        false,
+        "7.8.9",
+    );
+    for width in [17, 120] {
+        let lines = status.display_lines(width);
+        assert!(lines.iter().all(|line| line.width() <= usize::from(width)));
+        let rendered = render_lines(&lines).join("\n");
+        assert!(rendered.contains("v7.8.9"), "{rendered}");
+    }
 }

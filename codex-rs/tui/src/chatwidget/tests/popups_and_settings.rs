@@ -35,6 +35,7 @@ async fn experimental_mode_plan_is_ignored_on_startup() {
     let resolved_model = get_model_offline_for_tests(cfg.model.as_deref());
     let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
     let init = ChatWidgetInit {
+        client_version: crate::version::CODEX_CLI_VERSION,
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&cfg),
         config: cfg.clone(),

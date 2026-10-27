@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: 'triage-current checks current source; triage compares with baseline; integration runs full/baseline/build'
+        description: 'cleanup-red: full/config/config-baseline; cleanup: full/config/build; integration: full/baseline/build'
         required: true
         type: choice
         default: feature
-        options: [feature, full, baseline, build, integration, triage, triage-current]
+        options: [feature, full, baseline, build, integration, triage, triage-current, config, config-baseline, cleanup-red, cleanup]
 
 permissions:
   contents: read
@@ -43,7 +43,9 @@ jobs:
             if ($env:REQUESTED_SCOPE -ceq 'integration') { $scopes = @('full', 'baseline', 'build') }
             elseif ($env:REQUESTED_SCOPE -ceq 'triage') { $scopes = @('triage-full', 'triage-baseline') }
             elseif ($env:REQUESTED_SCOPE -ceq 'triage-current') { $scopes = @('triage-full') }
-            elseif ($env:REQUESTED_SCOPE -cin @('feature', 'full', 'baseline', 'build')) { $scopes = @($env:REQUESTED_SCOPE) }
+            elseif ($env:REQUESTED_SCOPE -ceq 'cleanup-red') { $scopes = @('full', 'config', 'config-baseline') }
+            elseif ($env:REQUESTED_SCOPE -ceq 'cleanup') { $scopes = @('full', 'config', 'build') }
+            elseif ($env:REQUESTED_SCOPE -cin @('feature', 'full', 'baseline', 'build', 'config', 'config-baseline')) { $scopes = @($env:REQUESTED_SCOPE) }
             else { throw "Unsupported scope: $env:REQUESTED_SCOPE" }
           } else { throw "Unsupported event: $env:GITHUB_EVENT_NAME" }
           $matrix = @{ scope=$scopes } | ConvertTo-Json -Compress
@@ -129,6 +131,10 @@ jobs:
               @{name='manual full'; event='workflow_dispatch'; request='full'; want=@('full')},
               @{name='manual baseline'; event='workflow_dispatch'; request='baseline'; want=@('baseline')},
               @{name='manual build'; event='workflow_dispatch'; request='build'; want=@('build')},
+              @{name='manual config'; event='workflow_dispatch'; request='config'; want=@('config')},
+              @{name='manual config baseline'; event='workflow_dispatch'; request='config-baseline'; want=@('config-baseline')},
+              @{name='cleanup RED compares config and runs full TUI'; event='workflow_dispatch'; request='cleanup-red'; want=@('full','config','config-baseline')},
+              @{name='cleanup verifies full TUI config and CLI'; event='workflow_dispatch'; request='cleanup'; want=@('full','config','build')},
               @{name='triage-current checks only the current revision'; event='workflow_dispatch'; request='triage-current'; want=@('triage-full')},
               @{name='triage compares both revisions serially'; event='workflow_dispatch'; request='triage'; want=@('triage-full','triage-baseline')},
               @{name='integration expands three independent scopes'; event='workflow_dispatch'; request='integration'; want=@('full','baseline','build')}
@@ -163,7 +169,7 @@ jobs:
           $selection = StepScript 'Select validated scope'
           Check 'matrix scopes produce separate log directories' {
               $paths = @()
-              foreach ($scope in @('full','baseline','build','triage-full','triage-baseline')) {
+              foreach ($scope in @('full','baseline','build','triage-full','triage-baseline','config','config-baseline')) {
                   $env:MATRIX_SCOPE = $scope
                   $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
                   $env:REQUESTED_SCOPE = $scope
@@ -176,7 +182,21 @@ jobs:
                   $entry = Get-Content -LiteralPath $env:GITHUB_ENV | Where-Object { $_.StartsWith('CODEXS_LOG_DIR=') }
                   $paths += $entry.Substring(15)
               }
-              Equal @($paths | Select-Object -Unique).Count 5
+              Equal @($paths | Select-Object -Unique).Count 7
+          }
+          foreach ($scope in @('feature','full','baseline','build','triage-full','triage-baseline','config','config-baseline')) {
+              Check "$scope selects its exact source ref" {
+                  $env:MATRIX_SCOPE = $scope
+                  $env:GITHUB_SHA = 'b' * 40
+                  $env:GITHUB_RUN_ATTEMPT = [guid]::NewGuid().ToString('N')
+                  $env:GITHUB_OUTPUT = Join-Path $probeRoot ($env:GITHUB_RUN_ATTEMPT + '.output')
+                  $env:GITHUB_ENV = Join-Path $probeRoot ($env:GITHUB_RUN_ATTEMPT + '.env')
+                  & ([scriptblock]::Create($selection)) | Out-Null
+                  $refs = @(Get-Content -LiteralPath $env:GITHUB_OUTPUT | Where-Object { $_.StartsWith('source_ref=') })
+                  Equal $refs.Count 1
+                  $want = if ($scope -cin @('baseline','triage-baseline','config-baseline')) { '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e' } else { $env:GITHUB_SHA }
+                  Equal $refs[0].Substring(11) $want
+              }
           }
           # Only the expensive external Rust compiler is replaced. The real runner
           # resolves a native executable, passes arguments, captures output and exits.
@@ -220,6 +240,8 @@ jobs:
               @{scope='baseline'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-tui','--config','profile.release.package.codex-tui.opt-level=1','--timings','--no-fail-fast')},
               @{scope='triage-full'; want=$triageArgs},
               @{scope='triage-baseline'; want=$triageArgs},
+              @{scope='config'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-config','--timings','--no-fail-fast')},
+              @{scope='config-baseline'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-config','--timings','--no-fail-fast')},
               @{scope='build'; want=@('run','1.95.0','cargo','build','--release','--locked','-p','codex-cli','--bin','codex','--timings')}
           )) {
               foreach ($nativeExit in @(0,101)) {
@@ -242,11 +264,36 @@ jobs:
                       Equal $exitCode $nativeExit
                       Equal (Get-Content -LiteralPath $state.native_exit) "$nativeExit"
                       Equal @(Get-Content -LiteralPath $env:CODEXS_PROBE_ARGS) $case.want
+                      $expectedOpt = if ($case.scope -cin @('config','config-baseline')) { 'n/a' } else { '1' }
+                      $header = Get-Content -LiteralPath $state.cargo_log -TotalCount 1
+                      Equal ($header -match ('tui_opt=' + [regex]::Escape($expectedOpt) + ' ')) $true
                   }
               }
           }
           # Execute the real result boundary: a partial exact-name selection must not go green.
           $summary = $native.Substring($native.IndexOf('$lines = if (Test-Path -LiteralPath $outPath)'))
+          foreach ($scope in @('config','config-baseline')) {
+              foreach ($case in @(@{count=0; native=0; failed=0; reject=$true}, @{count=3; native=0; failed=0; reject=$false}, @{count=3; native=101; failed=1; reject=$true}, @{count=3; native=0; failed=1; reject=$true}, @{count=3; native=0; failed=0; ignored=3; reject=$true})) {
+                  Check "$scope propagates native $($case.native) with count $($case.count)" {
+                      $id = [guid]::NewGuid().ToString('N')
+                      $outPath = Join-Path $probeRoot ($id + '.log')
+                      $exitPath = Join-Path $probeRoot ($id + '.exit')
+                      $stopPath = Join-Path $probeRoot ($id + '.stop')
+                      $resultPath = Join-Path $probeRoot ($id + '.outcome')
+                      $wrapperProblem = $null
+                      $env:CODEXS_SCOPE = $scope
+                      $env:CODEXS_SOURCE_SHA = 'a' * 40
+                      $env:GITHUB_STEP_SUMMARY = ''
+                      $ignoredCount = if ($case.ContainsKey('ignored')) { $case.ignored } else { 0 }
+                      $passedCount = $case.count - $case.failed - $ignoredCount
+                      "test result: ok. $passedCount passed; $($case.failed) failed; $ignoredCount ignored; 0 measured; 0 filtered out; finished in 0.00s" | Out-File -LiteralPath $outPath -Encoding utf8
+                      "$($case.native)" | Out-File -LiteralPath $exitPath -Encoding ascii
+                      $rejected = $false
+                      try { & ([scriptblock]::Create($summary)) | Out-Null } catch { $rejected = $true }
+                      Equal $rejected $case.reject
+                  }
+              }
+          }
           foreach ($scope in @('triage-full','triage-baseline')) {
               foreach ($count in @(0,10,11,12)) {
                   Check "$scope requires all eleven diagnostic tests (observed $count)" {
@@ -319,10 +366,12 @@ jobs:
           MATRIX_SCOPE: ${{ matrix.scope }}
         run: |
           $scope = $env:MATRIX_SCOPE
-          if ($scope -cnotin @('feature', 'full', 'baseline', 'build', 'triage-full', 'triage-baseline')) { throw "Unsupported scope: $scope" }
+          if ($scope -cnotin @('feature', 'full', 'baseline', 'build', 'triage-full', 'triage-baseline', 'config', 'config-baseline')) { throw "Unsupported scope: $scope" }
+          $sourceRef = if ($scope -cin @('baseline','triage-baseline','config-baseline')) { '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e' } else { $env:GITHUB_SHA }
           $logDir = Join-Path $env:RUNNER_TEMP "codexs-statusline-$scope-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           New-Item -ItemType Directory -Path $logDir -ErrorAction Stop | Out-Null
           "scope=$scope" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "source_ref=$sourceRef" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           "CODEXS_SCOPE=$scope" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "CODEXS_LOG_DIR=$logDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -330,7 +379,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          ref: ${{ (steps.scope.outputs.scope == 'baseline' || steps.scope.outputs.scope == 'triage-baseline') && '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e' || github.sha }}
+          ref: ${{ steps.scope.outputs.source_ref }}
 
       - name: Install pinned Rust
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -357,7 +406,7 @@ jobs:
             $sha = (& git rev-parse HEAD).Trim()
             $gitExit = $LASTEXITCODE
             if ($gitExit -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot verify source SHA' }
-            if ($env:CODEXS_SCOPE -cin @('baseline','triage-baseline') -and $sha -cne '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e') { throw "Wrong baseline source: $sha" }
+            if ($env:CODEXS_SCOPE -cin @('baseline','triage-baseline','config-baseline') -and $sha -cne '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e') { throw "Wrong baseline source: $sha" }
             $workspaceVersion = Select-String -LiteralPath Cargo.toml -Pattern '^version = "0\.162\.1"$' | Select-Object -First 1
             if (-not $workspaceVersion) { throw 'Unexpected Codex workspace version' }
             $toolchain = Get-Content -LiteralPath rust-toolchain.toml -Raw
@@ -386,7 +435,7 @@ jobs:
         working-directory: codex-rs
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:CODEXS_SCOPE -cnotin @('feature', 'full', 'baseline', 'build', 'triage-full', 'triage-baseline')) { throw 'Invalid scope from selection step' }
+          if ($env:CODEXS_SCOPE -cnotin @('feature', 'full', 'baseline', 'build', 'triage-full', 'triage-baseline', 'config', 'config-baseline')) { throw 'Invalid scope from selection step' }
           $logDir = [System.IO.Path]::GetFullPath($env:CODEXS_LOG_DIR)
           $guardPath = Join-Path $logDir 'resource-guard.ps1'
           $runnerPath = Join-Path $logDir 'cargo-runner.ps1'
@@ -411,6 +460,8 @@ jobs:
             $cargoArgs = @('run', '1.95.0', 'cargo')
             if ($state.scope -eq 'build') {
               $cargoArgs += @('build', '--release', '--locked', '-p', 'codex-cli', '--bin', 'codex', '--timings')
+            } elseif ($state.scope -cin @('config','config-baseline')) {
+              $cargoArgs += @('test', '--release', '--locked', '-p', 'codex-config', '--timings', '--no-fail-fast')
             } else {
               $cargoArgs += @('test', '--release', '--locked', '-p', 'codex-tui', '--config', 'profile.release.package.codex-tui.opt-level=1', '--timings')
               if ($state.scope -eq 'feature') { $cargoArgs += @('--lib', 'status_line_command') }
@@ -433,7 +484,8 @@ jobs:
               }
               else { $cargoArgs += '--no-fail-fast' }
             }
-            "scope=$($state.scope) source=$($state.source_sha) rust=1.95.0 jobs=1 release=true locked=true lto=off debug=0 tui_opt=1 native_command=$rustup $($cargoArgs -join ' ')" | Out-File -LiteralPath $state.cargo_log -Encoding utf8
+            $tuiOpt = if ($state.scope -cin @('config','config-baseline')) { 'n/a' } else { '1' }
+            "scope=$($state.scope) source=$($state.source_sha) rust=1.95.0 jobs=1 release=true locked=true lto=off debug=0 tui_opt=$tuiOpt native_command=$rustup $($cargoArgs -join ' ')" | Out-File -LiteralPath $state.cargo_log -Encoding utf8
             $ErrorActionPreference = 'Continue'
             & $rustup @cargoArgs 2>&1 | ForEach-Object { $line = "$_"; Write-Host $line; $line | Out-File -LiteralPath $state.cargo_log -Encoding utf8 -Append }
             $nativeExit = $LASTEXITCODE
@@ -831,6 +883,7 @@ jobs:
           if ($wrapperProblem -or $guardReason -ne 'none' -or $null -eq $nativeExit) { throw "Hosted validation did not complete normally: $outcome" }
           if ($nativeExit -ne 0) { throw "Cargo failed: $outcome" }
           if ($env:CODEXS_SCOPE -eq 'feature' -and $testCount -le 0) { throw "Feature filter ran zero tests: $outcome" }
+          if ($env:CODEXS_SCOPE -cin @('config','config-baseline') -and ($passed + $failed -le 0 -or $failed -ne 0)) { throw "Config validation must execute tests without failures: $outcome" }
           if ($env:CODEXS_SCOPE -cin @('triage-full','triage-baseline') -and ($testCount -ne 11 -or $ignored -ne 0)) { throw "Triage must run all eleven diagnostic tests without ignores: $outcome" }
 
 

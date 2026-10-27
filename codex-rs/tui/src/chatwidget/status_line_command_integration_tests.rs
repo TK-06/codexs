@@ -1650,3 +1650,26 @@ async fn resize_without_draw_does_not_defer_config_or_session_cancellation() {
         }
     }
 }
+
+#[tokio::test]
+async fn status_line_command_version_fixture_preserves_payload_identity() {
+    let (mut chat, _, mut events, _ops) = make_chatwidget_manual_with_sender().await;
+    chat.client_version = "0.0.0";
+    let payload = chat.status_line_command_payload();
+    assert_eq!(payload["version"], json!(env!("CARGO_PKG_VERSION")));
+
+    while events.try_recv().is_ok() {}
+    chat.add_status_output(false, None);
+    let mut rendered = String::new();
+    while let Ok(event) = events.try_recv() {
+        if let AppEvent::InsertHistoryCell(cell) = event {
+            for line in cell.display_lines(120) {
+                for span in line.spans {
+                    rendered.push_str(&span.content);
+                }
+                rendered.push('\n');
+            }
+        }
+    }
+    assert!(rendered.contains("v0.0.0"), "{rendered}");
+}

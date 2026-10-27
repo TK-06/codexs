@@ -12,6 +12,7 @@ impl ChatWidget {
         codex_op_target: CodexOpTarget,
     ) -> Self {
         let ChatWidgetInit {
+            client_version,
             config,
             local_settings,
             frame_requester,
@@ -96,6 +97,7 @@ impl ChatWidget {
             pet_http_client.clone(),
         );
         let mut widget = Self {
+            client_version,
             empty_state_animation: std::cell::RefCell::new(empty_state_animation),
             daybreak_enabled: false,
             app_event_tx: app_event_tx.clone(),

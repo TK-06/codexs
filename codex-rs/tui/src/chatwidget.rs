@@ -468,6 +468,7 @@ const DEFAULT_STATUS_LINE_ITEMS: [&str; 3] = ["model-with-reasoning", "current-d
 
 /// Common initialization parameters shared by all `ChatWidget` constructors.
 pub(crate) struct ChatWidgetInit {
+    pub(crate) client_version: &'static str,
     pub(crate) config: Config,
     pub(crate) local_settings: crate::local_settings::LocalSettings,
     pub(crate) frame_requester: FrameRequester,
@@ -517,6 +518,7 @@ pub(crate) enum ExternalEditorState {
 /// (which view gets Ctrl+C), while `ChatWidget` owns process-level decisions such as interrupting
 /// active work, arming the double-press quit shortcut, and requesting shutdown-first exit.
 pub(crate) struct ChatWidget {
+    client_version: &'static str,
     pub(crate) empty_state_animation:
         std::cell::RefCell<crate::empty_state_animation::EmptyStateAnimation>,
     pub(crate) daybreak_enabled: bool,

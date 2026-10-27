@@ -750,6 +750,7 @@ fn set_test_initial_prompt(app: &mut App, initial_prompt: String) {
     let config = app.config.clone();
     let model = get_model_offline_for_tests(config.model.as_deref());
     app.chat_widget = ChatWidget::new_with_app_event(ChatWidgetInit {
+        client_version: crate::version::CODEX_CLI_VERSION,
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&config),
         config,
@@ -5999,6 +6000,7 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
             is_first,
             /*tooltip_override*/ None,
             /*auth_plan*/ None,
+            crate::version::CODEX_CLI_VERSION,
         )) as Arc<dyn HistoryCell>
     };
 
@@ -6129,6 +6131,7 @@ async fn make_test_app() -> Box<App> {
     let session_telemetry = test_session_telemetry(&config, model.as_str());
 
     Box::new(App {
+        client_version: crate::version::CODEX_CLI_VERSION,
         feature_write_lock: Arc::default(),
         model_catalog: chat_widget.model_catalog(),
         session_telemetry,
@@ -6249,6 +6252,7 @@ pub(super) async fn make_test_app_with_channels() -> (
 
     (
         Box::new(App {
+            client_version: crate::version::CODEX_CLI_VERSION,
             feature_write_lock: Arc::default(),
             model_catalog: chat_widget.model_catalog(),
             session_telemetry,
@@ -7715,6 +7719,7 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
             is_first,
             /*tooltip_override*/ None,
             /*auth_plan*/ None,
+            crate::version::CODEX_CLI_VERSION,
         )) as Arc<dyn HistoryCell>
     };
 
@@ -8904,6 +8909,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
     );
 
     let replacement = ChatWidget::new_with_app_event(ChatWidgetInit {
+        client_version: crate::version::CODEX_CLI_VERSION,
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&app.config),
         config: app.config.clone(),
@@ -9970,3 +9976,29 @@ mod active_reconnect;
 #[cfg(unix)]
 #[path = "tests/navigation_reconnect_tests.rs"]
 mod navigation_reconnect;
+
+#[tokio::test]
+async fn status_line_command_production_metadata_survives_widget_replacement() {
+    let (mut app, mut events, _ops) = make_test_app_with_channels().await;
+    let mut tui = crate::tui::test_support::make_test_tui().expect("synthetic tui");
+    for version in [crate::version::CODEX_CLI_VERSION, "7.8.9"] {
+        app.client_version = version;
+        let init =
+            app.chatwidget_init_for_forked_or_resumed_thread(&mut tui, app.config.clone(), None);
+        app.chat_widget = ChatWidget::new_with_app_event(init);
+        while events.try_recv().is_ok() {}
+        app.chat_widget.add_status_output(false, None);
+        let mut rendered = String::new();
+        while let Ok(event) = events.try_recv() {
+            if let AppEvent::InsertHistoryCell(cell) = event {
+                for line in cell.display_lines(120) {
+                    for span in line.spans {
+                        rendered.push_str(&span.content);
+                    }
+                    rendered.push('\n');
+                }
+            }
+        }
+        assert!(rendered.contains(&format!("v{version}")), "{rendered}");
+    }
+}

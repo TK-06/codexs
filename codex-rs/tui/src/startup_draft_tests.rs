@@ -923,3 +923,14 @@ async fn startup_draft_preserves_large_pastes_without_attaching_images() {
     assert_eq!(draft.cursor, draft.text.len());
     assert!(draft.local_images.is_empty());
 }
+
+#[test]
+fn status_line_command_startup_header_uses_package_version() {
+    let header = startup_session_header(None);
+    let rendered = header
+        .display_lines(120)
+        .iter()
+        .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))
+        .collect::<String>();
+    assert!(rendered.contains(env!("CARGO_PKG_VERSION")), "{rendered}");
+}

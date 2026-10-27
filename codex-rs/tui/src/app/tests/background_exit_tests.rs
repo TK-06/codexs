@@ -459,7 +459,11 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
         )
     };
     app_server.thread_shell_command(thread_id, command).await?;
-    let turn_id = time::timeout(Duration::from_secs(/*secs*/ 10), async {
+    let mut readiness_events = 0usize;
+    let mut readiness_turn_started = false;
+    let mut readiness_command_started = false;
+    let mut readiness_output_bytes = 0usize;
+    let readiness_result = time::timeout(Duration::from_secs(/*secs*/ 10), async {
         let mut turn_id = None;
         let mut output = String::new();
         loop {
@@ -467,18 +471,30 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
                 .next_event()
                 .await
                 .expect("app-server event stream should remain open");
+            readiness_events += 1;
             if let codex_app_server_client::AppServerEvent::ServerNotification(notification) = event
             {
                 match notification.as_ref() {
                     ServerNotification::TurnStarted(notification)
                         if notification.thread_id == thread_id.to_string() =>
                     {
+                        readiness_turn_started = true;
                         turn_id = Some(notification.turn.id.clone());
                     }
                     ServerNotification::CommandExecutionOutputDelta(notification)
                         if notification.thread_id == thread_id.to_string() =>
                     {
+                        readiness_output_bytes += notification.delta.len();
                         output.push_str(&notification.delta);
+                    }
+                    ServerNotification::ItemStarted(notification)
+                        if notification.thread_id == thread_id.to_string()
+                            && matches!(
+                                &notification.item,
+                                codex_app_server_protocol::ThreadItem::CommandExecution { .. }
+                            ) =>
+                    {
+                        readiness_command_started = true;
                     }
                     ServerNotification::TurnCompleted(notification)
                         if notification.thread_id == thread_id.to_string() =>
@@ -495,8 +511,14 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
             }
         }
     })
-    .await
-    .expect("shell command should be running before interruption");
+    .await;
+    let turn_id = readiness_result.unwrap_or_else(|error| {
+        panic!(
+            "shell command should be running before interruption: {error}; \
+             events={readiness_events} turn_started={readiness_turn_started} \
+             command_started={readiness_command_started} output_bytes={readiness_output_bytes}"
+        )
+    });
     app.thread_event_channels.insert(
         thread_id,
         ThreadEventChannel::new_with_session(

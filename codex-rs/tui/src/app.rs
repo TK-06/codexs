@@ -527,6 +527,7 @@ struct InitialHistoryReplayBuffer {
 }
 
 pub(crate) struct App {
+    client_version: &'static str,
     feature_write_lock: Arc<tokio::sync::Mutex<()>>,
     model_catalog: Arc<ModelCatalog>,
     pub(crate) session_telemetry: SessionTelemetry,
@@ -820,6 +821,7 @@ impl App {
         initial_user_message: Option<crate::chatwidget::UserMessage>,
     ) -> crate::chatwidget::ChatWidgetInit {
         crate::chatwidget::ChatWidgetInit {
+            client_version: crate::version::CODEX_CLI_VERSION,
             local_settings: self.local_settings.clone(),
             config: cfg,
             frame_requester: tui.frame_requester(),

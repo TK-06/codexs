@@ -18,6 +18,15 @@ pub(crate) struct UpdateAvailableHistoryCell {
 
 #[cfg_attr(debug_assertions, allow(dead_code))]
 impl UpdateAvailableHistoryCell {
+    pub(crate) fn new_with_current_version(
+        _current_version: &'static str,
+        latest_version: String,
+        update_action: Option<UpdateAction>,
+    ) -> Self {
+        // Callable scaffold: the presentation-version input is intentionally inert until hosted RED.
+        Self::new(latest_version, update_action)
+    }
+
     pub(crate) fn new(latest_version: String, update_action: Option<UpdateAction>) -> Self {
         Self {
             latest_version,
