@@ -7212,6 +7212,9 @@ async fn resizing_empty_transcript_schedules_settled_size_recheck() {
     tui.screen_size_for_event(&TuiEvent::Resize(resized_size))
         .expect("resolve resize event");
     tui.terminal.resize(resized_size).expect("apply event size");
+    // The settled backend sample intentionally lags the resize event.
+    tui.terminal.set_screen_size_for_test(initial_size);
+    assert_eq!(tui.terminal.last_known_screen_size, resized_size);
     assert!(app.handle_draw_size_change(resized_size, initial_size, &frame_requester));
     tokio::time::sleep(crate::transcript_reflow::TRANSCRIPT_REFLOW_DEBOUNCE).await;
     assert_eq!(
