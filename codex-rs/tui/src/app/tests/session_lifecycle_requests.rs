@@ -4357,15 +4357,20 @@ async fn changing_directory_preserves_project_trust_permissions_history_and_hook
             app.enqueue_thread_notification(closed, thread_closed_notification(closed))
                 .await?;
         }
+        // This destination is already trusted, so only the final transition check runs.
+        assert_eq!(
+            app.rebuild_config_for_cwd(failed.clone())
+                .await?
+                .active_project
+                .trust_level,
+            Some(T::Trusted),
+        );
         requests.lock().expect("request recorder lock").clear();
         app.change_working_directory(&mut tui, &mut server, failed.clone().abs())
             .await;
         assert_eq!(
             recorded_params(&requests, "thread/backgroundTerminals/list"),
-            vec![
-                json!({"threadId": original.to_string(), "cursor": null, "limit": 1}),
-                json!({"threadId": original.to_string(), "cursor": null, "limit": 1}),
-            ],
+            vec![json!({"threadId": original.to_string(), "cursor": null, "limit": 1})],
         );
         let output = history().join("");
         insta::allow_duplicates! {
