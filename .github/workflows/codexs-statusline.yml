@@ -432,6 +432,13 @@ jobs:
           # Expected nonzero probe exits have been checked; do not leak one to GitHub's shell epilogue.
           exit 0
 
+      - name: Check isolated codexs installer
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testPath = Join-Path (Get-Location) 'codexs/install.Tests.ps1'
+          & ([scriptblock]::Create([System.IO.File]::ReadAllText($testPath))) -InstallerPath (Join-Path (Get-Location) 'codexs/install.ps1')
+          $global:LASTEXITCODE = 0
+
       - name: Check status-line Rust formatting
         working-directory: codex-rs
         run: |
