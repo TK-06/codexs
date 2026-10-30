@@ -274,8 +274,8 @@ jobs:
           )
           foreach ($case in @(
               @{scope='feature'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-tui','--config','profile.release.package.codex-tui.opt-level=1','--timings','--lib','status_line_command')},
-              @{scope='full'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-tui','--config','profile.release.package.codex-tui.opt-level=1','--timings','--no-fail-fast')},
-              @{scope='baseline'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-tui','--config','profile.release.package.codex-tui.opt-level=1','--timings','--no-fail-fast')},
+              @{scope='full'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-tui','--config','profile.release.package.codex-tui.opt-level=1','--timings','--no-fail-fast','--','--test-threads=1')},
+              @{scope='baseline'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-tui','--config','profile.release.package.codex-tui.opt-level=1','--timings','--no-fail-fast','--','--test-threads=1')},
               @{scope='triage-full'; want=$triageArgs},
               @{scope='triage-baseline'; want=$triageArgs},
               @{scope='config'; want=@('run','1.95.0','cargo','test','--release','--locked','-p','codex-config','--timings','--no-fail-fast')},
@@ -671,7 +671,9 @@ jobs:
                   'app::turn_tips::tests::turn_tip_placements_and_completion_barrier'
                 )
               }
-              else { $cargoArgs += '--no-fail-fast' }
+              # Full/baseline exercise shared terminal/environment and real-shell
+              # fixtures. Serialize cases inside each runner; CI jobs stay parallel.
+              else { $cargoArgs += @('--no-fail-fast','--','--test-threads=1') }
             }
             $tuiOpt = if ($state.scope -cin @('config','config-baseline')) { 'n/a' } else { '1' }
             "scope=$($state.scope) source=$($state.source_sha) rust=1.95.0 jobs=1 release=true locked=true lto=off debug=0 tui_opt=$tuiOpt native_command=$rustup $($cargoArgs -join ' ')" | Out-File -LiteralPath $state.cargo_log -Encoding utf8

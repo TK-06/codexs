@@ -84,6 +84,8 @@ Outstanding real-install inputs/gates are concrete:
 
 ## Approved real installation, later
 
+The full and baseline Windows suites now request one Rust test-harness thread per runner. This removes concurrent test-case execution around shared terminal/environment and real-shell fixtures; it is independent of Cargo build jobs. Feature, config, build and full CI jobs retain their parallel workflow scheduling. The observed full-suite readiness failure passed when rerun alone; this concurrency correction still needs a new full-suite result and does not identify the exact interacting test. All tests, readiness assertions, compiler settings and resource/time limits are retained. Sequential test execution can take longer.
+
 Complete the remaining work in this order:
 
 1. Publish the reviewed Windows workflow preparation with fresh Git permission, then obtain feature and full/config/build results for the same Codex SHA. A formatter-only push does not start native acceptance.
