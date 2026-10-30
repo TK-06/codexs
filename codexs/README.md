@@ -68,7 +68,7 @@ The numbers shown describe the last verified0.162.1 source; replace them with th
 
 ### Exact source policy and remaining gates
 
-The current checkout HEAD is `4beaeb1faff11bdb62613e8acb837f0ec85350a5`. The prepared native artifact/evidence must name this full revision and match the downloaded binary's independently verified SHA256. Reconfirm those local inputs before use; synthetic assertions do not authenticate hosted evidence.
+Read the selected source checkout's full revision with `git rev-parse HEAD`. The native artifact and successful feature/full/config/build evidence must name that exact revision, and the downloaded binary's independently verified SHA256 must match the evidence. Earlier accepted revisions and artifact names are historical evidence, not substitutes for the selected HEAD. Reconfirm those inputs before use; synthetic assertions do not authenticate hosted evidence.
 
 The installer deliberately compares evidence `source_sha` to **HEAD**, after rejecting tracked native-source changes. Even a later installer-only commit changes HEAD and makes the existing artifact fail this check. Comparing only Cargo versions or accepting a matching `codex-rs` diff would weaken provenance: build dependencies and workflow/toolchain inputs can live outside that directory. This prototype introduces no such bypass or alternate revision flag.
 
@@ -83,6 +83,27 @@ Outstanding real-install inputs/gates are concrete:
 - After acceptance, a separately authorized product release/tag and future tracking record containing product version, native version, formatter version, native source SHA, binary SHA256 and hosted evidence references. Do not label an old SHA as the identity of uncommitted product code.
 
 ## Approved real installation, later
+
+Complete the remaining work in this order:
+
+1. Publish the reviewed Windows workflow preparation with fresh Git permission, then obtain feature and full/config/build results for the same Codex SHA. A formatter-only push does not start native acceptance.
+2. If the full suite reports the shell-readiness deadline, inspect `cargo.exit-readiness.log` in its validation-log artifact. The exact one-test diagnostic uses the already compiled target and runs inside the existing resource guard. It leaves the original full-suite failure and totals intact, even if isolation passes. A passing diagnostic alone is not full acceptance and does not prove why startup was delayed.
+3. After native acceptance, review the exact-source binary, hash, evidence and matching pinned package inputs. Prepare downloads/extraction only after the separate preparation approval.
+4. Complete the manual checks below with the existing preview before a real installation. Do not infer them from unit tests or a generally successful launch.
+5. Review the stable separate Codex settings, installation/shims and any user PATH addition for explicit approval. Preserve the user's customized preview settings rather than resetting them from a generic example.
+6. Verify both installed commands from a fresh terminal and unrelated directory. Multiline is a separate next task; an optional global formatter replacement or release/tag remains separately gated.
+
+| Manual check | Required observation | State |
+|---|---|---|
+| Editor | Codex header/version and tab title; save/reopen retains widgets and extra lines | Pending observed acceptance |
+| Live refresh | Complete a normal reply, then verify native context/tokens/limits as available; clock advances at the configured interval | Pending observed acceptance |
+| Resize | Widen/narrow the terminal and observe safe refitting without broken glyphs/input | Pending observed acceptance |
+| Failure fallback | A controlled failing/missing footer command selects the built-in footer and one warning for that session | Pending controlled fixture/manual run |
+| Project trust | Prove a project config layer was loaded and verify its footer command execution marker remains absent | Pending controlled fixture/manual run |
+| Lifecycle | Recorded exact child identities are absent after refresh/shutdown; idle soak leaves no owned descendants | Pending controlled fixture/manual run |
+| Metrics | Cached/total values, session name, compactions and speeds follow actual native availability; speed is absent before a matching measurement | Pending observed acceptance |
+
+The marker/PID fixtures must contain only synthetic data and stay in the approved private task directory. Do not copy credentials or capture real status payloads for these checks. A project directory whose config was never loaded is inconclusive. Record pass, fail or inconclusive for each case; existing saved Line2 is expected to remain absent from the current one-line footer.
 
 After the separate real-install approval, load `install.ps1` as a scriptblock and pass `-Install` plus the eight input paths. For example, with `$inputs` already populated with the reviewed named inputs:
 

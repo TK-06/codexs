@@ -208,8 +208,23 @@ jobs:
           using System.IO;
           public static class CodexsCargoBoundaryProbe {
               public static int Main(string[] args) {
+                  if (Array.IndexOf(args, "app::tests::background_exit_tests::exit_interrupts_before_requesting_shutdown") >= 0) {
+                      File.WriteAllLines(Environment.GetEnvironmentVariable("CODEXS_PROBE_DIAGNOSTIC_ARGS"), args);
+                      Console.WriteLine(Environment.GetEnvironmentVariable("CODEXS_PROBE_DIAGNOSTIC_ZERO") == "1"
+                          ? "test result: ok. 0 passed; 0 failed; 0 ignored;"
+                          : "test result: ok. 1 passed; 0 failed; 0 ignored;");
+                      return int.Parse(Environment.GetEnvironmentVariable("CODEXS_PROBE_DIAGNOSTIC_EXIT") ?? "0");
+                  }
                   File.WriteAllLines(Environment.GetEnvironmentVariable("CODEXS_PROBE_ARGS"), args);
                   Console.WriteLine("synthetic native boundary probe (no Rust build)");
+                  string readiness = Environment.GetEnvironmentVariable("CODEXS_PROBE_READINESS_FAILURE");
+                  if (readiness == "1" || readiness == "header") {
+                      Console.WriteLine("---- app::tests::background_exit_tests::exit_interrupts_before_requesting_shutdown stdout ----");
+                  }
+                  if (readiness == "1") {
+                      Console.WriteLine("shell command should be running before interruption: deadline has elapsed; script_started=Some(false)");
+                      Console.WriteLine("test result: FAILED. 5778 passed; 1 failed; 4 ignored;");
+                  }
                   return int.Parse(Environment.GetEnvironmentVariable("CODEXS_PROBE_EXIT"));
               }
           }
@@ -290,6 +305,66 @@ jobs:
                       $expectedOpt = if ($case.scope -cin @('config','config-baseline')) { 'n/a' } else { '1' }
                       $header = Get-Content -LiteralPath $state.cargo_log -TotalCount 1
                       Equal ($header -match ('tui_opt=' + [regex]::Escape($expectedOpt) + ' ')) $true
+                  }
+              }
+          }
+          foreach ($case in @(
+              @{name='isolated pass preserves full failure'; scope='full'; primary=101; diagnostic=0; zero='0'; run=$true; verified=$true},
+              @{name='isolated failure preserves full failure'; scope='full'; primary=101; diagnostic=101; zero='0'; run=$true; verified=$false},
+              @{name='zero selected tests is not diagnostic success'; scope='full'; primary=101; diagnostic=0; zero='1'; run=$true; verified=$false},
+              @{name='unwritable diagnostic log preserves full failure'; scope='full'; primary=101; diagnostic=0; zero='0'; run=$false; verified=$false; logBlocked=$true},
+              @{name='unrelated full failure is not rerun'; scope='full'; primary=101; diagnostic=0; zero='0'; run=$false; verified=$false; readiness='0'},
+              @{name='test name alone does not trigger a readiness rerun'; scope='full'; primary=101; diagnostic=0; zero='0'; run=$false; verified=$false; readiness='header'},
+              @{name='passing full suite is not rerun'; scope='full'; primary=0; diagnostic=0; zero='0'; run=$false; verified=$false},
+              @{name='feature scope is not rerun'; scope='feature'; primary=101; diagnostic=0; zero='0'; run=$false; verified=$false},
+              @{name='baseline scope is not rerun'; scope='baseline'; primary=101; diagnostic=0; zero='0'; run=$false; verified=$false}
+          )) {
+              Check "readiness diagnostic: $($case.name)" {
+                  $id = [guid]::NewGuid().ToString('N')
+                  $env:CODEXS_PROBE_ARGS = Join-Path $probeRoot ($id + '.args')
+                  $env:CODEXS_PROBE_EXIT = "$($case.primary)"
+                  $env:CODEXS_PROBE_READINESS_FAILURE = if ($case.ContainsKey('readiness')) { $case.readiness } else { '1' }
+                  $env:CODEXS_PROBE_DIAGNOSTIC_ARGS = Join-Path $probeRoot ($id + '.diagnostic-args')
+                  $env:CODEXS_PROBE_DIAGNOSTIC_EXIT = "$($case.diagnostic)"
+                  $env:CODEXS_PROBE_DIAGNOSTIC_ZERO = $case.zero
+                  try {
+                      $statePath = Join-Path $probeRoot ($id + '.json')
+                      $state = @{
+                          workdir=$probeRoot; scope=$case.scope; source_sha=('a' * 40)
+                          cargo_log=(Join-Path $probeRoot ($id + '.log'))
+                          native_exit=(Join-Path $probeRoot ($id + '.exit'))
+                          runner_error=(Join-Path $probeRoot ($id + '.error'))
+                      }
+                      $state | ConvertTo-Json | Out-File -LiteralPath $statePath -Encoding utf8
+                      if ($case.logBlocked) {
+                          New-Item -ItemType Directory -Path ([IO.Path]::ChangeExtension($state.cargo_log, '.exit-readiness.log')) | Out-Null
+                      }
+                      $env:CODEXS_GUARD_STATE = $statePath
+                      $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($runner))
+                      & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded > $null 2> (Join-Path $probeRoot ($id + '.stderr'))
+                      $exitCode = $LASTEXITCODE
+                      Equal $exitCode $case.primary
+                      Equal (Get-Content -LiteralPath $state.native_exit) "$($case.primary)"
+                      Equal (Test-Path -LiteralPath $state.runner_error) $false
+                      Equal (Test-Path -LiteralPath $env:CODEXS_PROBE_DIAGNOSTIC_ARGS) $case.run
+                      if ($case.run) {
+                          Equal @(Get-Content -LiteralPath $env:CODEXS_PROBE_DIAGNOSTIC_ARGS) @(
+                              'run','1.95.0','cargo','test','--release','--locked','-p','codex-tui',
+                              '--config','profile.release.package.codex-tui.opt-level=1','--lib',
+                              'app::tests::background_exit_tests::exit_interrupts_before_requesting_shutdown',
+                              '--','--exact','--test-threads=1','--nocapture'
+                          )
+                          $diagnosticLog = [IO.Path]::ChangeExtension($state.cargo_log, '.exit-readiness.log')
+                          $diagnosticText = Get-Content -LiteralPath $diagnosticLog -Raw
+                          Equal ($diagnosticText -match ('verified_single_test=' + $case.verified)) $true
+                          # Isolated results must not change the full-suite totals.
+                          Equal @(Get-Content -LiteralPath $state.cargo_log | Where-Object { $_ -match '^test result:' }).Count 1
+                      }
+                  } finally {
+                      Remove-Item Env:CODEXS_PROBE_READINESS_FAILURE -ErrorAction SilentlyContinue
+                      Remove-Item Env:CODEXS_PROBE_DIAGNOSTIC_ARGS -ErrorAction SilentlyContinue
+                      Remove-Item Env:CODEXS_PROBE_DIAGNOSTIC_EXIT -ErrorAction SilentlyContinue
+                      Remove-Item Env:CODEXS_PROBE_DIAGNOSTIC_ZERO -ErrorAction SilentlyContinue
                   }
               }
           }
@@ -606,6 +681,39 @@ jobs:
             $ErrorActionPreference = 'Stop'
             if ($null -eq $nativeExit) { throw 'Native Cargo exit code was unavailable' }
             $nativeExit | Out-File -LiteralPath $state.native_exit -Encoding ascii
+            # Keep a failing full run failed. This follow-up only distinguishes a
+            # reproducible readiness failure from one that disappears in isolation.
+            if ($state.scope -ceq 'full' -and $nativeExit -ne 0 -and
+                (Select-String -LiteralPath $state.cargo_log -SimpleMatch '---- app::tests::background_exit_tests::exit_interrupts_before_requesting_shutdown stdout ----' -Quiet) -and
+                (Select-String -LiteralPath $state.cargo_log -Pattern '^shell command should be running before interruption:.*deadline has elapsed' -Quiet)) {
+              try {
+                $diagnosticLog = [IO.Path]::ChangeExtension($state.cargo_log, '.exit-readiness.log')
+                $diagnosticArgs = @(
+                  'run','1.95.0','cargo','test','--release','--locked','-p','codex-tui',
+                  '--config','profile.release.package.codex-tui.opt-level=1','--lib',
+                  'app::tests::background_exit_tests::exit_interrupts_before_requesting_shutdown',
+                  '--','--exact','--test-threads=1','--nocapture'
+                )
+                "diagnostic_only=true original_native_exit=$nativeExit native_command=$rustup $($diagnosticArgs -join ' ')" | Out-File -LiteralPath $diagnosticLog -Encoding utf8
+                $env:RUST_BACKTRACE = '1'
+                $ErrorActionPreference = 'Continue'
+                & $rustup @diagnosticArgs 2>&1 | ForEach-Object {
+                  $line = "$_"
+                  Write-Host "[isolated readiness diagnostic] $line"
+                  $line | Out-File -LiteralPath $diagnosticLog -Encoding utf8 -Append
+                }
+                $diagnosticExit = $LASTEXITCODE
+                $ErrorActionPreference = 'Stop'
+                $diagnosticResults = @(Get-Content -LiteralPath $diagnosticLog | Where-Object { $_ -match '^test result:' })
+                $diagnosticVerified = $diagnosticExit -eq 0 -and $diagnosticResults.Count -eq 1 -and
+                  $diagnosticResults[0] -match '^test result: ok\.\s+1 passed;\s+0 failed;\s+0 ignored;'
+                "diagnostic_native_exit=$diagnosticExit verified_single_test=$diagnosticVerified original_native_exit=$nativeExit" | Out-File -LiteralPath $diagnosticLog -Encoding utf8 -Append
+              } catch {
+                # Diagnostic failure must not replace the original failing exit.
+                $ErrorActionPreference = 'Stop'
+                Write-Host "Isolated readiness diagnostic unavailable: $($_.Exception.Message)"
+              }
+            }
             if ($state.scope -eq 'build' -and $nativeExit -eq 0) {
               $binary = Join-Path $env:CARGO_TARGET_DIR 'release/codex.exe'
               if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'Built CLI binary was unavailable for version validation' }
