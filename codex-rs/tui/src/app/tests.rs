@@ -878,6 +878,7 @@ fn set_test_initial_prompt(app: &mut App, initial_prompt: String) {
     let config = app.config.clone();
     let model = get_model_offline_for_tests(config.model.as_deref());
     app.chat_widget = ChatWidget::new_with_app_event(ChatWidgetInit {
+        client_version: "0.0.0",
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&config),
         config,
@@ -6277,6 +6278,7 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
             is_first,
             /*tooltip_override*/ None,
             /*auth_plan*/ None,
+            "0.0.0",
         )) as Arc<dyn HistoryCell>
     };
 
@@ -6408,6 +6410,7 @@ async fn make_test_app() -> Box<App> {
     let session_telemetry = test_session_telemetry(&config, model.as_str());
 
     Box::new(App {
+        client_version: "0.0.0",
         feature_write_lock: Arc::default(),
         config_notification_test_generation: 0,
         config_notification_test_pending: None,
@@ -6534,6 +6537,7 @@ pub(super) async fn make_test_app_with_channels() -> (
 
     (
         Box::new(App {
+            client_version: "0.0.0",
             feature_write_lock: Arc::default(),
             config_notification_test_generation: 0,
             config_notification_test_pending: None,
@@ -7505,6 +7509,9 @@ async fn resizing_empty_transcript_schedules_settled_size_recheck() {
     tui.screen_size_for_event(&TuiEvent::Resize(resized_size))
         .expect("resolve resize event");
     tui.terminal.resize(resized_size).expect("apply event size");
+    // The settled backend sample intentionally lags the resize event.
+    tui.terminal.set_screen_size_for_test(initial_size);
+    assert_eq!(tui.terminal.last_known_screen_size, resized_size);
     assert!(app.handle_draw_size_change(resized_size, initial_size, &frame_requester));
     tokio::time::sleep(crate::transcript_reflow::TRANSCRIPT_REFLOW_DEBOUNCE).await;
     assert_eq!(
@@ -8005,6 +8012,7 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
             is_first,
             /*tooltip_override*/ None,
             /*auth_plan*/ None,
+            "0.0.0",
         )) as Arc<dyn HistoryCell>
     };
 
@@ -9245,6 +9253,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
     );
 
     let replacement = ChatWidget::new_with_app_event(ChatWidgetInit {
+        client_version: "0.0.0",
         requires_openai_auth: true,
         local_settings: crate::local_settings::LocalSettings::from(&app.config),
         config: app.config.clone(),
@@ -10345,3 +10354,29 @@ mod navigation_reconnect;
 
 #[path = "tests/backend_event_tests.rs"]
 mod backend_event_tests;
+
+#[tokio::test]
+async fn status_line_command_production_metadata_survives_widget_replacement() {
+    let (mut app, mut events, _ops) = make_test_app_with_channels().await;
+    let mut tui = crate::tui::test_support::make_test_tui().expect("synthetic tui");
+    for version in [crate::version::CODEX_CLI_VERSION, "7.8.9"] {
+        app.client_version = version;
+        let init =
+            app.chatwidget_init_for_forked_or_resumed_thread(&mut tui, app.config.clone(), None);
+        app.chat_widget = ChatWidget::new_with_app_event(init);
+        while events.try_recv().is_ok() {}
+        app.chat_widget.add_status_output(false, None);
+        let mut rendered = String::new();
+        while let Ok(event) = events.try_recv() {
+            if let AppEvent::InsertHistoryCell(cell) = event {
+                for line in cell.display_lines(120) {
+                    for span in line.spans {
+                        rendered.push_str(&span.content);
+                    }
+                    rendered.push('\n');
+                }
+            }
+        }
+        assert!(rendered.contains(&format!("v{version}")), "{rendered}");
+    }
+}

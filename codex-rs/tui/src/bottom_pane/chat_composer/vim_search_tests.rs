@@ -1,8 +1,10 @@
 //! Fresh draft entry and composer-local Vim search remain separate input paths.
 
+use super::super::ActivePopup;
 use super::super::InputResult;
 use super::super::tests::snapshot_composer_state_with_width;
 use super::super::tests::type_chars_humanlike;
+use crate::bottom_pane::command_popup::include_debug_commands_for_snapshot;
 use crate::keymap::KeyChordMatch;
 use crate::keymap::KeyChordMatcher;
 use crate::keymap::RuntimeKeymap;
@@ -123,6 +125,10 @@ fn empty_vim_normal_slash_opens_commands() {
             type_chars_humanlike(composer, &['/']);
             assert_eq!(composer.current_text(), "/");
             assert_eq!(composer.draft.textarea.vim_mode_label(), Some("Insert"));
+            let ActivePopup::Command(popup) = &mut composer.popups.active else {
+                panic!("slash entry should open the command popup");
+            };
+            include_debug_commands_for_snapshot(popup);
         },
     );
 }

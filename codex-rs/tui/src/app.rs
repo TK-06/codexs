@@ -537,6 +537,7 @@ struct InitialHistoryReplayBuffer {
 }
 
 pub(crate) struct App {
+    client_version: &'static str,
     feature_write_lock: Arc<tokio::sync::Mutex<()>>,
     config_notification_test_generation: u64,
     config_notification_test_pending: Option<u64>,
@@ -837,6 +838,7 @@ impl App {
         initial_user_message: Option<crate::chatwidget::UserMessage>,
     ) -> crate::chatwidget::ChatWidgetInit {
         crate::chatwidget::ChatWidgetInit {
+            client_version: self.client_version,
             local_settings: self.local_settings.clone(),
             config: cfg,
             frame_requester: tui.frame_requester(),

@@ -32,7 +32,9 @@ impl ProjectTrustLookup {
                 original: path.to_string_lossy().into_owned(),
                 canonical: normalize_for_path_comparison(path)
                     .ok()
-                    .map(|path| path.to_string_lossy().into_owned()),
+                    // Persisted project keys use dunce's non-verbatim spelling
+                    // when Windows can represent the canonical path that way.
+                    .map(|path| dunce::simplified(&path).to_string_lossy().into_owned()),
             },
             /*repo_root*/ None,
         )

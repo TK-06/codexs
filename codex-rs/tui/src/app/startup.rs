@@ -609,6 +609,7 @@ impl App {
                     }
                 };
                 let init = crate::chatwidget::ChatWidgetInit {
+                    client_version: crate::version::CODEX_CLI_VERSION,
                     local_settings: local_settings.clone(),
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -759,6 +760,7 @@ impl App {
                     }
                 };
                 let init = crate::chatwidget::ChatWidgetInit {
+                    client_version: crate::version::CODEX_CLI_VERSION,
                     local_settings: local_settings.clone(),
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -872,6 +874,7 @@ impl App {
                     }
                 }
                 let init = crate::chatwidget::ChatWidgetInit {
+                    client_version: crate::version::CODEX_CLI_VERSION,
                     local_settings: local_settings.clone(),
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -965,6 +968,7 @@ See the Codex keymap documentation for supported actions and examples."
         let agents_overview =
             agents_overview::AgentsOverviewState::new(local_settings.tui.agents_overview_grouping);
         let mut app = Self {
+            client_version: crate::version::CODEX_CLI_VERSION,
             feature_write_lock: Arc::default(),
             config_notification_test_generation: 0,
             config_notification_test_pending: None,

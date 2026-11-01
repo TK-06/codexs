@@ -479,11 +479,35 @@ pub(super) async fn start_recording_realtime_speech_app_server(
 pub(super) async fn start_recording_app_server_with_realtime_speech(
     config: &Config,
     history_capabilities: HistoryCapabilities,
+    blocked_thread_list: Option<(ThreadId, oneshot::Sender<()>, oneshot::Receiver<()>)>,
+    failed_thread_name: Option<&'static str>,
+    thread_params_mode: crate::app_server_session::ThreadParamsMode,
+    realtime_behavior: RealtimeRequestBehavior,
+    loader_overrides: LoaderOverrides,
+) -> Result<RecordingAppServer> {
+    start_recording_app_server_with_shutdown(
+        config,
+        history_capabilities,
+        blocked_thread_list,
+        failed_thread_name,
+        thread_params_mode,
+        realtime_behavior,
+        loader_overrides,
+        /*shutdown*/ None,
+    )
+    .await
+}
+
+/// Allow startup tests to finish proxy cleanup while client request handles are still alive.
+pub(super) async fn start_recording_app_server_with_shutdown(
+    config: &Config,
+    history_capabilities: HistoryCapabilities,
     mut blocked_thread_list: Option<(ThreadId, oneshot::Sender<()>, oneshot::Receiver<()>)>,
     failed_thread_name: Option<&'static str>,
     thread_params_mode: crate::app_server_session::ThreadParamsMode,
     realtime_behavior: RealtimeRequestBehavior,
     loader_overrides: LoaderOverrides,
+    mut shutdown: Option<oneshot::Receiver<()>>,
 ) -> Result<RecordingAppServer> {
     let state_db =
         crate::init_state_db_for_app_server_target(config, &crate::AppServerTarget::Embedded)
@@ -515,6 +539,14 @@ pub(super) async fn start_recording_app_server_with_realtime_speech(
         let mut reject_thread_list = history_capabilities == HistoryCapabilities::ThreadListFails;
         loop {
             let frame = tokio::select! {
+                _ = async {
+                    match shutdown.as_mut() {
+                        Some(shutdown) => {
+                            let _ = shutdown.await;
+                        }
+                        None => std::future::pending::<()>().await,
+                    }
+                } => break,
                 frame = websocket.next() => frame,
                 event = embedded.next_event() => {
                     let Some(event) = event else { break };
@@ -3194,6 +3226,7 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
             /*is_first_event*/ false,
             Some("This is a test announcement".to_string()),
             /*auth_plan*/ None,
+            "0.0.0",
         )),
     );
     app.enqueue_primary_thread_session(started.session, started.turns)
@@ -4539,6 +4572,14 @@ async fn changing_directory_preserves_project_trust_permissions_history_and_hook
             app.enqueue_thread_notification(closed, thread_closed_notification(closed))
                 .await?;
         }
+        // This destination is already trusted, so only the final transition check runs.
+        assert_eq!(
+            app.rebuild_config_for_cwd(failed.clone())
+                .await?
+                .active_project
+                .trust_level,
+            Some(T::Trusted),
+        );
         requests.lock().expect("request recorder lock").clear();
         app.change_working_directory(&mut tui, &mut server, failed.clone().abs())
             .await;

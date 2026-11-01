@@ -28,8 +28,7 @@ fn owned_startup_keeps_the_live_bottom_geometry() {
         .join("\n");
     insta::assert_snapshot!(
         "owned_startup_layout",
-        format!("cursor={:?}\n{frame}", layout.cursor_pos(area))
-            .replace(crate::version::CODEX_CLI_VERSION, "<VERSION>")
+        format!("cursor={:?}\n{frame}", layout.cursor_pos(area)).replace("0.0.0", "<VERSION>")
     );
 }
 

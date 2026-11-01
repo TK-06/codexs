@@ -339,6 +339,10 @@ pub(crate) use self::permissions_menu::auto_review_available;
 pub(crate) use self::permissions_menu::cyber_model_approval_reviewer;
 mod backend_banners;
 mod compaction;
+mod status_line_command_glue;
+pub(crate) use status_line_command_glue::StatusLineCommandIdentity;
+#[cfg(test)]
+mod status_line_command_integration_tests;
 mod luna_reserve_model;
 mod luna_reserve_return;
 mod security_setup;
@@ -472,6 +476,7 @@ const DEFAULT_STATUS_LINE_ITEMS: [&str; 3] = ["model-with-reasoning", "current-d
 
 /// Common initialization parameters shared by all `ChatWidget` constructors.
 pub(crate) struct ChatWidgetInit {
+    pub(crate) client_version: &'static str,
     pub(crate) config: Config,
     pub(crate) local_settings: crate::local_settings::LocalSettings,
     pub(crate) frame_requester: FrameRequester,
@@ -521,6 +526,7 @@ pub(crate) enum ExternalEditorState {
 /// (which view gets Ctrl+C), while `ChatWidget` owns process-level decisions such as interrupting
 /// active work, arming the double-press quit shortcut, and requesting shutdown-first exit.
 pub(crate) struct ChatWidget {
+    client_version: &'static str,
     pub(crate) empty_state_animation:
         std::cell::RefCell<crate::empty_state_animation::EmptyStateAnimation>,
     pub(crate) daybreak_enabled: bool,
@@ -741,6 +747,7 @@ pub(crate) struct ChatWidget {
     session_network_proxy: Option<SessionNetworkProxyRuntime>,
     // Shared latch so we only warn once about invalid status-line item IDs.
     status_line_invalid_items_warned: Arc<AtomicBool>,
+    status_line_command: status_line_command_glue::StatusLineCommandWidgetState,
     // Shared latch so we only warn once about invalid terminal-title item IDs.
     terminal_title_invalid_items_warned: Arc<AtomicBool>,
     // Last terminal title emitted, to avoid writing duplicate OSC updates.
@@ -1141,6 +1148,7 @@ impl ChatWidget {
                 self.bottom_pane
                     .set_context_window(/*percent*/ None, /*used_tokens*/ None);
                 self.token_info = None;
+                self.observe_status_line_command_tokens();
             }
         }
     }
@@ -1153,6 +1161,7 @@ impl ChatWidget {
         let used_tokens = self.context_used_tokens(&info, percent.is_some());
         self.bottom_pane.set_context_window(percent, used_tokens);
         self.token_info = Some(info);
+        self.status_line_command_tokens_changed();
     }
 
     fn context_remaining_percent(&self, info: &TokenUsageInfo) -> Option<i64> {
@@ -1188,6 +1197,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn pre_draw_tick(&mut self) {
+        self.status_line_command_pre_draw();
         self.update_due_hook_visibility();
         self.schedule_hook_timer_if_needed();
         self.bottom_pane.pre_draw_tick();
@@ -1537,13 +1547,21 @@ impl ChatWidget {
     }
 
     /// Build a placeholder header cell while the session is configuring.
+    #[cfg(test)]
     fn placeholder_session_header_cell(config: &Config) -> Box<dyn HistoryCell> {
+        Self::placeholder_session_header_cell_with_version(config, CODEX_CLI_VERSION)
+    }
+
+    fn placeholder_session_header_cell_with_version(
+        config: &Config,
+        client_version: &'static str,
+    ) -> Box<dyn HistoryCell> {
         Box::new(
             history_cell::SessionHeaderHistoryCell::new(
                 DEFAULT_MODEL_DISPLAY_NAME.to_string(),
                 /*reasoning_effort*/ None,
                 config.cwd.to_path_buf(),
-                CODEX_CLI_VERSION,
+                client_version,
             )
             .with_yolo_mode(history_cell::is_yolo_mode(config)),
         )
@@ -1730,6 +1748,9 @@ impl ChatWidget {
     pub(crate) fn on_terminal_resize(&mut self, width: u16) {
         let had_rendered_width = self.last_rendered_width.get().is_some();
         self.last_rendered_width.set(Some(width));
+        if self.local_settings.status_line_command.config.is_some() {
+            self.refresh_status_line();
+        }
         let stream_width = self.current_stream_width(/*reserved_cols*/ 2);
         let plan_stream_width = self.current_stream_width(/*reserved_cols*/ 4);
         if let Some(controller) = self.stream_controller.as_mut() {
@@ -2092,6 +2113,8 @@ fn has_websocket_timing_metrics(summary: RuntimeMetricsSummary) -> bool {
 
 impl Drop for ChatWidget {
     fn drop(&mut self) {
+        // Detach the task while closing its input, so it awaits owned cleanup.
+        drop(self.stop_status_line_command());
         if self.realtime_conversation.handle.is_some()
             && let Some(thread_id) = self.thread_id
         {

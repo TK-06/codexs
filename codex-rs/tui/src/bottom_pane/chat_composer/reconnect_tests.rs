@@ -139,7 +139,6 @@ fn unavailable_thread_dispatches_recovery_and_local_commands() {
         SlashCommand::Status,
         SlashCommand::DebugConfig,
         SlashCommand::Pwd,
-        SlashCommand::Rollout,
         SlashCommand::Copy,
         SlashCommand::Raw,
     ] {
@@ -153,6 +152,28 @@ fn unavailable_thread_dispatches_recovery_and_local_commands() {
             InputResult::Command(command),
         );
         assert_eq!(composer.current_text(), "");
+    }
+
+    let commands = crate::slash_command::built_in_slash_commands();
+    for command in [SlashCommand::Rollout, SlashCommand::TestApproval] {
+        assert_eq!(
+            commands.iter().any(|(_, candidate)| *candidate == command),
+            cfg!(debug_assertions),
+        );
+    }
+
+    let (mut composer, _) = new_test_composer();
+    composer.set_text_content("/rollout".into(), Vec::new(), Vec::new());
+    let result = composer.handle_restricted_key(
+        KeyEvent::from(KeyCode::Enter),
+        RestrictedInputMode::UnavailableThread,
+    );
+    if cfg!(debug_assertions) {
+        assert_eq!(result, InputResult::Command(SlashCommand::Rollout));
+        assert_eq!(composer.current_text(), "");
+    } else {
+        assert_eq!(result, InputResult::None);
+        assert_eq!(composer.current_text(), "/rollout");
     }
 }
 

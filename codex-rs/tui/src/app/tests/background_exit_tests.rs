@@ -444,9 +444,14 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
     // the directory also releases it if the test fails before reaching the exit.
     let running = tempdir()?;
     let running_path = running.path().to_string_lossy();
+    // This owned marker distinguishes script entry from stdout readiness on failure.
+    let readiness_script_marker = running.path().join("started");
     let command = if cfg!(windows) {
         format!(
-            "Write-Output 'exit-test-ready'; while (Test-Path -LiteralPath '{}') {{ Start-Sleep -Milliseconds 100 }}",
+            "[System.IO.File]::WriteAllText('{}', 'started'); [Console]::Out.WriteLine('exit-test-ready'); [Console]::Out.Flush(); while (Test-Path -LiteralPath '{}') {{ Start-Sleep -Milliseconds 100 }}",
+            readiness_script_marker
+                .to_string_lossy()
+                .replace('\'', "''"),
             running_path.replace('\'', "''"),
         )
     } else {
@@ -456,7 +461,11 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
         )
     };
     app_server.thread_shell_command(thread_id, command).await?;
-    let turn_id = time::timeout(Duration::from_secs(/*secs*/ 10), async {
+    let mut readiness_events = 0usize;
+    let mut readiness_turn_started = false;
+    let mut readiness_command_started = false;
+    let mut readiness_output_bytes = 0usize;
+    let readiness_result = time::timeout(Duration::from_secs(/*secs*/ 10), async {
         let mut turn_id = None;
         let mut output = String::new();
         loop {
@@ -464,6 +473,7 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
                 .next_event()
                 .await
                 .expect("app-server event stream should remain open");
+            readiness_events += 1;
             if let codex_app_server_client::AppServerEvent::ServerNotification(notification) =
                 event.event
             {
@@ -471,12 +481,23 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
                     ServerNotification::TurnStarted(notification)
                         if notification.thread_id == thread_id.to_string() =>
                     {
+                        readiness_turn_started = true;
                         turn_id = Some(notification.turn.id.clone());
                     }
                     ServerNotification::CommandExecutionOutputDelta(notification)
                         if notification.thread_id == thread_id.to_string() =>
                     {
+                        readiness_output_bytes += notification.delta.len();
                         output.push_str(&notification.delta);
+                    }
+                    ServerNotification::ItemStarted(notification)
+                        if notification.thread_id == thread_id.to_string()
+                            && matches!(
+                                &notification.item,
+                                codex_app_server_protocol::ThreadItem::CommandExecution { .. }
+                            ) =>
+                    {
+                        readiness_command_started = true;
                     }
                     ServerNotification::TurnCompleted(notification)
                         if notification.thread_id == thread_id.to_string() =>
@@ -493,8 +514,16 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
             }
         }
     })
-    .await
-    .expect("shell command should be running before interruption");
+    .await;
+    let turn_id = readiness_result.unwrap_or_else(|error| {
+        let script_started = cfg!(windows).then(|| readiness_script_marker.is_file());
+        panic!(
+            "shell command should be running before interruption: {error}; \
+             events={readiness_events} turn_started={readiness_turn_started} \
+             command_started={readiness_command_started} output_bytes={readiness_output_bytes} \
+             script_started={script_started:?}"
+        )
+    });
     app.thread_event_channels.insert(
         thread_id,
         ThreadEventChannel::new_with_session(

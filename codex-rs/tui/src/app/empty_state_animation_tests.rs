@@ -123,10 +123,13 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
     );
     app.insert_history_cell(
         &mut tui,
-        Box::new(history_cell::UpdateAvailableHistoryCell::new(
-            "99.0.0".into(),
-            /*update_action*/ None,
-        )),
+        Box::new(
+            history_cell::UpdateAvailableHistoryCell::new_with_current_version(
+                "0.0.0",
+                "99.0.0".into(),
+                /*update_action*/ None,
+            ),
+        ),
     );
     app.insert_history_cell(
         &mut tui,
@@ -181,6 +184,15 @@ async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()
     let size = Size::new(/*width*/ 120, /*height*/ 44);
     let mut tui = crate::tui::test_support::make_test_tui()?;
     tui.set_owned_screen(/*owned*/ true)?;
+    app.transcript_cells.push(Arc::new(
+        history_cell::SessionHeaderHistoryCell::new(
+            app.chat_widget.model_display_name().to_string(),
+            app.chat_widget.current_reasoning_effort(),
+            app.config.cwd.to_path_buf(),
+            "0.0.0",
+        )
+        .with_yolo_mode(history_cell::is_yolo_mode(&app.config)),
+    ));
     app.queue_clear_ui_header(&mut tui);
     app.transcript_cells
         .push(Arc::new(history_cell::StartupWarningsCell::mcp(

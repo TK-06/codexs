@@ -283,11 +283,13 @@ mod tests {
     use ratatui::widgets::FrameExt;
 
     fn new_prompt() -> UpdatePromptScreen {
-        UpdatePromptScreen::new(
+        let mut screen = UpdatePromptScreen::new(
             FrameRequester::test_dummy(),
             "9.9.9".into(),
             UpdateAction::NpmGlobalLatest,
-        )
+        );
+        screen.current_version = "0.0.0".to_string();
+        screen
     }
 
     #[test]
@@ -299,6 +301,21 @@ mod tests {
             .draw(|frame| frame.render_widget_ref(&screen, frame.area()))
             .expect("render update prompt");
         insta::assert_snapshot!("update_prompt_modal", terminal.backend());
+    }
+
+    #[test]
+    fn status_line_command_release_update_prompt_uses_package_version() {
+        let screen = UpdatePromptScreen::new(
+            FrameRequester::test_dummy(),
+            "9.9.9".into(),
+            UpdateAction::NpmGlobalLatest,
+        );
+        let mut terminal = Terminal::new(VT100Backend::new(80, 12)).expect("terminal");
+        terminal
+            .draw(|frame| frame.render_widget_ref(&screen, frame.area()))
+            .expect("render release update prompt");
+        let rendered = terminal.backend().to_string();
+        assert!(rendered.contains(env!("CARGO_PKG_VERSION")), "{rendered}");
     }
 
     #[test]

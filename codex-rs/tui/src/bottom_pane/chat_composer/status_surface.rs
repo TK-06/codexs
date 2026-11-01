@@ -61,6 +61,14 @@ impl ChatComposer {
             .map_or(/*default*/ 0, |line| line.width() as u16);
         let width = max_left_width_for_right(area, right_width)
             .unwrap_or_else(|| inset_footer_hint_area(area).width);
+        // Measure the maximum command capacity of the same compact-mode layout
+        // used when a longer line no longer fits with the full cycle hint.
+        let compact_width = self
+            .mode_indicator_line(false)
+            .map_or(0, |line| line.width() as u16);
+        let command_width = max_left_width_for_right(area, compact_width)
+            .unwrap_or_else(|| inset_footer_hint_area(area).width);
+        self.record_command_width(area.width, command_width, &props);
         let transition = self
             .effort_status_line_transition
             .as_ref()

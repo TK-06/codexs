@@ -12,6 +12,7 @@ impl ChatWidget {
         codex_op_target: CodexOpTarget,
     ) -> Self {
         let ChatWidgetInit {
+            client_version,
             config,
             local_settings,
             frame_requester,
@@ -64,7 +65,7 @@ impl ChatWidget {
         };
 
         let empty_state_animation = crate::empty_state_animation::EmptyStateAnimation::default();
-        let header = Self::placeholder_session_header_cell(&config);
+        let header = Self::placeholder_session_header_cell_with_version(&config, client_version);
         let active_cell = Some(header);
 
         let current_cwd = Some(config.cwd.to_path_buf());
@@ -97,6 +98,7 @@ impl ChatWidget {
         );
         let config_panel_tui = local_settings.tui.clone();
         let mut widget = Self {
+            client_version,
             empty_state_animation: std::cell::RefCell::new(empty_state_animation),
             daybreak_enabled: false,
             app_event_tx: app_event_tx.clone(),
@@ -268,6 +270,7 @@ impl ChatWidget {
             instruction_source_paths: Vec::new(),
             session_network_proxy: None,
             status_line_invalid_items_warned,
+            status_line_command: Default::default(),
             terminal_title_invalid_items_warned,
             last_terminal_title: None,
             last_terminal_title_requires_action: false,

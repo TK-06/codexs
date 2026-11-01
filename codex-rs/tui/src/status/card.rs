@@ -7,7 +7,6 @@ use crate::line_truncation::line_width;
 use crate::style::accent_color;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
-use crate::version::CODEX_CLI_VERSION;
 use chrono::DateTime;
 use chrono::Local;
 use codex_app_server_protocol::AskForApproval;
@@ -126,6 +125,7 @@ impl StatusHistoryHandle {
 
 #[derive(Debug)]
 struct StatusHistoryCell {
+    client_version: &'static str,
     model_name: String,
     model_details: Vec<String>,
     directory: PathBuf,
@@ -218,6 +218,7 @@ pub(crate) fn new_status_output_with_rate_limits(
         reasoning_effort_override,
         "<none>".to_string(),
         refreshing_rate_limits,
+        "0.0.0",
     )
     .0
 }
@@ -242,6 +243,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
     reasoning_effort_override: Option<Option<ReasoningEffort>>,
     agents_summary: String,
     refreshing_rate_limits: bool,
+    client_version: &'static str,
 ) -> (CompositeHistoryCell, StatusHistoryHandle) {
     let command = PlainHistoryCell::new(vec!["/status".magenta().into()]);
     let card = Arc::new(StatusHistoryCell::new(
@@ -263,6 +265,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
         reasoning_effort_override,
         agents_summary,
         refreshing_rate_limits,
+        client_version,
     ));
     let handle = StatusHistoryHandle {
         card: Arc::clone(&card),
@@ -295,6 +298,7 @@ impl StatusHistoryCell {
         reasoning_effort_override: Option<Option<ReasoningEffort>>,
         agents_summary: String,
         refreshing_rate_limits: bool,
+        client_version: &'static str,
     ) -> Self {
         let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
         let permission_profile = config.permissions.effective_permission_profile();
@@ -406,6 +410,7 @@ impl StatusHistoryCell {
         let thread_usage = StatusThreadUsage::default();
 
         Self {
+            client_version,
             model_name,
             model_details,
             directory: config.cwd.to_path_buf(),
@@ -912,7 +917,7 @@ impl StatusHistoryCell {
             ""
         };
         let mut title = vec![indent.into()];
-        title.extend(crate::history_cell::codex_title(CODEX_CLI_VERSION));
+        title.extend(crate::history_cell::codex_title(self.client_version));
         let mut rendered = word_wrap_lines(
             [Line::from(title)],
             RtOptions::new(available_width).subsequent_indent(indent.into()),

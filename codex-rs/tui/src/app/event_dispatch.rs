@@ -57,6 +57,8 @@ impl App {
             && !matches!(
                 &event,
                 AppEvent::OpenDaemonMenu
+                    | AppEvent::StatusLineCommandOutput { .. }
+                    | AppEvent::StatusLineCommandTick { .. }
                     | AppEvent::OpenWarnings
                     | AppEvent::StatusLineSetup { .. }
                     | AppEvent::StatusLineSetupCancelled
@@ -1067,6 +1069,7 @@ impl App {
                 }
             },
             AppEvent::FatalExitRequest(message) => {
+                self.shutdown_status_line_commands().await;
                 return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
             }
             AppEvent::ImagesPrepared(id) => {
@@ -2923,7 +2926,10 @@ impl App {
                         self.open_agents_overview(app_server);
                     }
                     AppRunControl::Continue => {}
-                    AppRunControl::Exit(reason) => return Ok(AppRunControl::Exit(reason)),
+                    AppRunControl::Exit(reason) => {
+                        self.shutdown_status_line_commands().await;
+                        return Ok(AppRunControl::Exit(reason));
+                    }
                 }
             }
             AppEvent::ForkAgentsOverviewThread { thread_id } => {
@@ -3388,6 +3394,23 @@ impl App {
                     }
                 }
             }
+            AppEvent::StatusLineCommandOutput {
+                identity,
+                runtime,
+                generation,
+                effect,
+            } => {
+                self.chat_widget
+                    .handle_status_line_command_output(identity, runtime, generation, effect);
+            }
+            AppEvent::StatusLineCommandTick {
+                identity,
+                runtime,
+                epoch,
+            } => {
+                self.chat_widget
+                    .handle_status_line_command_tick(identity, runtime, epoch);
+            }
             AppEvent::StatusLineBranchUpdated { cwd, branch } => {
                 self.chat_widget.set_status_line_branch(cwd, branch);
                 self.refresh_status_line();
@@ -3789,11 +3812,19 @@ impl App {
         }
     }
 
+    async fn shutdown_status_line_commands(&mut self) {
+        self.chat_widget.shutdown_status_line_command().await;
+        if let Some(voice) = self.background_voice.as_mut() {
+            voice.shutdown_status_line_command().await;
+        }
+    }
+
     pub(super) async fn handle_exit_mode(
         &mut self,
         app_server: &mut AppServerSession,
         mode: ExitMode,
     ) -> AppRunControl {
+        self.shutdown_status_line_commands().await;
         for (request_id, (_, task)) in self.dynamic_tool_tasks.drain() {
             task.abort();
             let response = crate::dynamic_tools::failure_response(
@@ -3895,6 +3926,7 @@ impl App {
         .await;
         Ok(match result {
             Ok(()) if !self.app_server_target.supports_command_center() => {
+                self.shutdown_status_line_commands().await;
                 AppRunControl::Exit(ExitReason::Archived(thread_id))
             }
             Ok(()) => {
@@ -3963,6 +3995,7 @@ impl App {
         .await;
         Ok(match result {
             Ok(()) if !self.app_server_target.supports_command_center() => {
+                self.shutdown_status_line_commands().await;
                 AppRunControl::Exit(ExitReason::ThreadRemoved)
             }
             Ok(()) => {

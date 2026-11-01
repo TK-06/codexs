@@ -71,6 +71,7 @@ impl ChatWidget {
         display: SessionConfiguredDisplay,
         fork_parent_title: Option<String>,
     ) {
+        self.reset_status_line_command_session(self.thread_id == Some(session.thread_id));
         self.windows_sandbox_host =
             if !self.windows_sandbox_local_server && self.remote_connection.is_some() {
                 crate::app::WindowsSandboxHost::Remote
@@ -241,6 +242,7 @@ impl ChatWidget {
                 self.show_welcome_banner,
                 startup_tooltip_override,
                 self.plan_type,
+                self.client_version,
             );
             self.apply_session_info_cell(session_info_cell);
         } else if self

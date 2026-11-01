@@ -254,6 +254,12 @@ where
         terminal
     }
 
+    /// Set the sampled screen size independently of an applied resize event.
+    #[cfg(test)]
+    pub(crate) fn set_screen_size_for_test(&mut self, screen_size: Size) {
+        self.screen_size_override = Some(screen_size);
+    }
+
     /// Get a Frame object which provides a consistent view into the terminal state for rendering.
     pub fn get_frame(&mut self) -> Frame<'_> {
         Frame {
@@ -316,6 +322,10 @@ where
     /// of the screen.
     pub fn resize(&mut self, screen_size: Size) -> io::Result<()> {
         self.last_known_screen_size = screen_size;
+        #[cfg(test)]
+        if self.screen_size_override.is_some() {
+            self.screen_size_override = Some(screen_size);
+        }
         Ok(())
     }
 
