@@ -623,6 +623,8 @@ jobs:
       run:
         shell: powershell
     env:
+      # Keep nested dependency checkouts below the Windows legacy path limit.
+      CARGO_HOME: 'D:\c'
       CARGO_BUILD_JOBS: '1'
       CARGO_PROFILE_RELEASE_DEBUG: '0'
       CARGO_PROFILE_RELEASE_LTO: 'off'
@@ -673,9 +675,9 @@ jobs:
         uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
+            ${{ env.CARGO_HOME }}/registry/index
+            ${{ env.CARGO_HOME }}/registry/cache
+            ${{ env.CARGO_HOME }}/git/db
           key: codexs-windows-cargo-1.95.0-${{ hashFiles('codex-rs/Cargo.lock') }}
 
       - name: Verify source and select target drive
@@ -1238,9 +1240,9 @@ jobs:
         uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
+            ${{ env.CARGO_HOME }}/registry/index
+            ${{ env.CARGO_HOME }}/registry/cache
+            ${{ env.CARGO_HOME }}/git/db
           key: codexs-windows-cargo-1.95.0-${{ hashFiles('codex-rs/Cargo.lock') }}
 
       - name: Upload validation logs

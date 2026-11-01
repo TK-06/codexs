@@ -156,6 +156,50 @@ test('validation uploader finds failure logs for labelled and legacy runs', () =
   }
 });
 
+test('Windows dependency checkout fits the legacy path limit with the selected Cargo home', () => {
+  const windows = source.slice(source.indexOf('\n  windows:'));
+  const env = windows.split('    env:')[1]?.split('    steps:')[0];
+  const value = env?.match(/^      CARGO_HOME: (.+)$/m)?.[1].trim();
+  const home = value?.replace(/^(['"])(.*)\1$/, '$2') || 'C:\\Users\\synthetic-runner\\.cargo';
+  const relative = path.win32.join(
+    `git/checkouts/rusty_v8-${'a'.repeat(16)}`, 'bbbbbbb',
+    'third_party/rust/chromium_crates_io/vendor/icu_calendar-v2/src/tests/snapshots',
+    'icu_calendar__tests__date_arithmetic_snapshot__date_add_snapshot__date_add_snapshot_Ethiopian (Amete Alem).snap',
+  );
+  assert.ok(path.win32.isAbsolute(home), 'Cargo home must be an absolute Windows path');
+  assert.ok(path.win32.join(home, relative).length < 260,
+    'nested dependency checkout exceeds the Windows legacy path limit');
+});
+
+test('Cargo cache restore and save use the active home without caching checkouts or builds', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexs-workflow-test-'));
+  try {
+    const active = path.join(directory, 'active-cargo');
+    const legacy = path.join(directory, 'legacy-user');
+    const expected = ['registry/index', 'registry/cache', 'git/db'].map(part => path.join(active, part));
+    for (const folder of expected) {
+      fs.mkdirSync(folder, { recursive: true });
+      fs.writeFileSync(path.join(folder, 'synthetic-download'), 'synthetic cached download');
+    }
+    for (const name of ['Restore Cargo downloads only', 'Save Cargo downloads only']) {
+      const section = source.split(new RegExp(`^      - name: ${name}\\r?\\n`, 'm'))[1]?.split(/\r?\n      - name:/)[0];
+      assert.ok(section, `missing ${name}`);
+      const block = section.split('          path: |')[1]?.split(/^          \S/m)[0];
+      assert.ok(block, `missing cache paths for ${name}`);
+      const folders = block.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(input => {
+        const expanded = input.replace(/\$\{\{\s*env.CARGO_HOME\s*\}\}/g, active).replace(/^~(?=[\\/])/, legacy);
+        assert.ok(!expanded.includes('${{'), 'unresolved cache path binding');
+        return path.normalize(expanded);
+      });
+      assert.deepEqual(folders.sort(), [...expected].sort(), `${name} must follow the active Cargo home`);
+      assert.ok(folders.every(folder => fs.existsSync(path.join(folder, 'synthetic-download'))));
+    }
+  } finally {
+    if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('codexs-workflow-test-')) throw Error('Unsafe cache test cleanup');
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
 test('a full-suite command that discovers zero tests fails acceptance', () => {
   const lines = source.split(/\r?\n/);
   const start = lines.findIndex(line => line.startsWith('          if ($wrapperProblem -or $guardReason'));
