@@ -32,7 +32,7 @@ function step(name) {
   return { body: body.join('\n'), bindings };
 }
 
-function execute(name, context = {}, extra = {}) {
+function execute(name, context = {}, extra = {}, inspect) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexs-workflow-test-'));
   try {
     const selected = step(name);
@@ -47,6 +47,7 @@ function execute(name, context = {}, extra = {}) {
     const result = spawnSync(path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { env, cwd: root, windowsHide: true, encoding: 'utf8', timeout: 10000 });
     const outputs = fs.existsSync(env.GITHUB_OUTPUT) ? fs.readFileSync(env.GITHUB_OUTPUT, 'utf8').replace(/^\uFEFF/, '') : '';
+    if (inspect) inspect({ result, env, outputs });
     return { ...result, outputs };
   } finally {
     if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('codexs-workflow-test-')) throw Error('Unsafe test cleanup');
@@ -120,6 +121,39 @@ test('legacy artifact suffix remains compatible with existing download commands'
   const result = execute('Select validated scope', { inputs: {}, matrix: { scope: 'feature' } });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(result.outputs.includes('artifact_suffix=101-1'));
+});
+
+test('validation uploader finds failure logs for labelled and legacy runs', () => {
+  const section = source.split('      - name: Upload validation logs\n')[1]?.split(/\r?\n      - name:/)[0]
+    || source.split('      - name: Upload validation logs\r\n')[1]?.split(/\r?\n      - name:/)[0];
+  assert.ok(section, 'missing validation-log uploader');
+  const input = section.match(/^          path: (.+)$/m)?.[1].trim();
+  assert.ok(input, 'missing validation-log upload path');
+  const cases = [
+    { ...caller({ scope: 'feature', validation_id: 'port-feature' }), matrix: { scope: 'feature' } },
+    ...['full', 'config', 'build'].map(scope => ({ ...caller({ validation_id: 'port-cleanup' }), matrix: { scope } })),
+    { inputs: {}, matrix: { scope: 'feature' } },
+  ];
+  for (const context of cases) {
+    execute('Select validated scope', context, {}, ({ result, env, outputs }) => {
+      assert.equal(result.status, 0, result.stderr);
+      const selected = fs.readFileSync(env.GITHUB_ENV, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/);
+      const logDir = selected.find(line => line.startsWith('CODEXS_LOG_DIR=')).slice('CODEXS_LOG_DIR='.length);
+      fs.writeFileSync(path.join(logDir, 'cargo.log'), 'synthetic Cargo failure\n');
+      const suffix = outputs.split(/\r?\n/).find(line => line.startsWith('artifact_suffix=')).slice('artifact_suffix='.length);
+      const values = {
+        'env.CODEXS_LOG_DIR': logDir, 'runner.temp': env.RUNNER_TEMP, 'matrix.scope': context.matrix.scope,
+        'github.run_id': env.GITHUB_RUN_ID, 'github.run_attempt': env.GITHUB_RUN_ATTEMPT,
+        'steps.scope.outputs.artifact_suffix': suffix,
+      };
+      const uploadPath = input.replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_, key) => {
+        assert.ok(Object.hasOwn(values, key), `unknown uploader binding: ${key}`);
+        return values[key];
+      });
+      assert.ok(fs.existsSync(path.join(uploadPath, 'cargo.log')),
+        `validation uploader misses selected failure log for ${context.inputs.validation_id || 'legacy'}/${context.matrix.scope}`);
+    });
+  }
 });
 
 test('a full-suite command that discovers zero tests fails acceptance', () => {

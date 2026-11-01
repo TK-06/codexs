@@ -1248,7 +1248,7 @@ jobs:
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: codexs-statusline-${{ matrix.scope }}-${{ steps.scope.outputs.artifact_suffix }}
-          path: ${{ runner.temp }}\codexs-statusline-${{ matrix.scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CODEXS_LOG_DIR }}
           if-no-files-found: warn
           retention-days: 14
 
