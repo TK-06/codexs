@@ -15,13 +15,46 @@ on:
         type: choice
         default: feature
         options: [feature, full, baseline, build, integration, triage, triage-current, config, config-baseline, cleanup-red, cleanup]
+      candidate_sha:
+        description: 'Optional immutable candidate SHA for explicit release validation'
+        required: false
+        type: string
+        default: ''
+      baseline_sha:
+        description: 'Required with candidate_sha: immutable upstream baseline SHA'
+        required: false
+        type: string
+        default: ''
+      validation_id:
+        description: 'Required with candidate_sha: unique invocation label'
+        required: false
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      candidate_sha:
+        required: true
+        type: string
+      baseline_sha:
+        required: true
+        type: string
+      scope:
+        required: true
+        type: string
+      validation_id:
+        required: true
+        type: string
+    outputs:
+      validation_summary:
+        description: 'Evidence locator only; suite outcomes must be collected and verified separately'
+        value: ${{ jobs.plan.outputs.validation_summary }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: codexs-statusline-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'feature' || inputs.scope }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: codexs-statusline-${{ github.workflow }}-${{ github.ref }}-${{ inputs.validation_id || (github.event_name == 'push' && 'feature' || inputs.scope) }}-${{ inputs.candidate_sha || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'push' && !inputs.candidate_sha }}
 
 jobs:
   plan:
@@ -30,15 +63,27 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.scopes.outputs.matrix }}
+      validation_summary: ${{ steps.scopes.outputs.validation_summary }}
     steps:
       - name: Resolve execution scopes
         id: scopes
         shell: powershell
         env:
           REQUESTED_SCOPE: ${{ inputs.scope }}
+          CALLER_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CALLER_BASELINE_SHA: ${{ inputs.baseline_sha }}
+          CALLER_VALIDATION_ID: ${{ inputs.validation_id }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:GITHUB_EVENT_NAME -eq 'push') { $scopes = @('feature') }
+          $hasCaller = -not [string]::IsNullOrEmpty($env:CALLER_CANDIDATE_SHA) -or -not [string]::IsNullOrEmpty($env:CALLER_BASELINE_SHA) -or -not [string]::IsNullOrEmpty($env:CALLER_VALIDATION_ID)
+          if ($hasCaller) {
+            if ($env:CALLER_CANDIDATE_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:CALLER_BASELINE_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Reusable validation requires immutable candidate and baseline SHAs' }
+            if ($env:CALLER_VALIDATION_ID -cnotmatch '^[a-z][a-z0-9-]{0,31}$') { throw 'Unsafe validation invocation identity' }
+            if ($env:REQUESTED_SCOPE -ceq 'feature') { $scopes = @('feature') }
+            elseif ($env:REQUESTED_SCOPE -ceq 'cleanup') { $scopes = @('full', 'config', 'build') }
+            else { throw 'Reusable validation requires feature or cleanup scope' }
+          }
+          elseif ($env:GITHUB_EVENT_NAME -eq 'push') { $scopes = @('feature') }
           elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
             if ($env:REQUESTED_SCOPE -ceq 'integration') { $scopes = @('full', 'baseline', 'build') }
             elseif ($env:REQUESTED_SCOPE -ceq 'triage') { $scopes = @('triage-full', 'triage-baseline') }
@@ -50,6 +95,14 @@ jobs:
           } else { throw "Unsupported event: $env:GITHUB_EVENT_NAME" }
           $matrix = @{ scope=$scopes } | ConvertTo-Json -Compress
           "matrix=$matrix" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          $suffix = if ($hasCaller) { "$env:CALLER_VALIDATION_ID-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" } else { "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" }
+          $locator = @{
+            schema=1; verified=$false; repository=$env:GITHUB_REPOSITORY
+            candidate_sha=$env:CALLER_CANDIDATE_SHA; baseline_sha=$env:CALLER_BASELINE_SHA
+            validation_id=$env:CALLER_VALIDATION_ID; run=$env:GITHUB_RUN_ID; attempt=$env:GITHUB_RUN_ATTEMPT
+            scopes=@($scopes); artifacts=@($scopes | ForEach-Object { "codexs-statusline-$_-$suffix" })
+          } | ConvertTo-Json -Compress -Depth 4
+          "validation_summary=$locator" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
   quick_checks:
     name: Quick workflow and status-line formatting checks
@@ -290,6 +343,7 @@ jobs:
                       $statePath = Join-Path $probeRoot ($id + '.json')
                       $state = @{
                           workdir=$probeRoot; scope=$case.scope; source_sha=('a' * 40)
+                          workspace_version='0.162.1'
                           cargo_log=(Join-Path $probeRoot ($id + '.log'))
                           native_exit=(Join-Path $probeRoot ($id + '.exit'))
                           runner_error=(Join-Path $probeRoot ($id + '.error'))
@@ -331,6 +385,7 @@ jobs:
                       $statePath = Join-Path $probeRoot ($id + '.json')
                       $state = @{
                           workdir=$probeRoot; scope=$case.scope; source_sha=('a' * 40)
+                          workspace_version='0.162.1'
                           cargo_log=(Join-Path $probeRoot ($id + '.log'))
                           native_exit=(Join-Path $probeRoot ($id + '.exit'))
                           runner_error=(Join-Path $probeRoot ($id + '.error'))
@@ -436,6 +491,8 @@ jobs:
           }
           foreach ($case in @(
               @{name='correct package version'; text='codex-cli 0.162.1'; empty='0'; versionExit=0; missing=$false; want=0},
+              @{name='newer stable package version'; text='codex-cli 0.166.0'; expected='0.166.0'; empty='0'; versionExit=0; missing=$false; want=0},
+              @{name='old binary for newer source'; text='codex-cli 0.162.1'; expected='0.166.0'; empty='0'; versionExit=0; missing=$false; want=251},
               @{name='wrong development version'; text='codex-cli 0.0.0'; empty='0'; versionExit=0; missing=$false; want=251},
               @{name='empty version output'; text=''; empty='1'; versionExit=0; missing=$false; want=251},
               @{name='nonzero version exit'; text='codex-cli 0.162.1'; empty='0'; versionExit=7; missing=$false; want=251},
@@ -457,6 +514,7 @@ jobs:
                       $statePath = Join-Path $probeRoot ($id + '.json')
                       $state = @{
                           workdir=$probeRoot; scope='build'; source_sha=('a' * 40)
+                          workspace_version=$(if ($case.expected) { $case.expected } else { '0.162.1' })
                           cargo_log=(Join-Path $probeRoot ($id + '.log'))
                           native_exit=(Join-Path $probeRoot ($id + '.exit'))
                           runner_error=(Join-Path $probeRoot ($id + '.error'))
@@ -514,6 +572,29 @@ jobs:
           & ([scriptblock]::Create([System.IO.File]::ReadAllText($testPath))) -InstallerPath (Join-Path (Get-Location) 'codexs/install.ps1')
           $global:LASTEXITCODE = 0
 
+      - name: Install Node for isolated update checks
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Check isolated update modules
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $required = @('codexs/upstream/upstream.test.cjs','codexs/release/workflow.test.cjs','codexs/update/protocol.test.cjs','codexs/update/paths.test.cjs')
+          foreach ($file in $required) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'Missing required updater test suite' } }
+          $tests = @(Get-ChildItem -LiteralPath 'codexs/upstream','codexs/release','codexs/update' -Filter '*.test.cjs' -File -Recurse | Sort-Object FullName | ForEach-Object { $_.FullName })
+          $ErrorActionPreference = 'Continue'
+          $nodeLines = @(& node --test --test-reporter=tap @tests 2>&1 | ForEach-Object { "$_" })
+          $nodeExit = $LASTEXITCODE
+          $ErrorActionPreference = 'Stop'
+          $nodeLines | ForEach-Object { Write-Host $_ }
+          $summaries = @($nodeLines | Where-Object { $_ -cmatch '^# tests [1-9][0-9]*$' })
+          if ($null -eq $nodeExit -or $nodeExit -ne 0 -or $summaries.Count -ne 1) { throw 'Updater module tests failed or discovered zero tests' }
+          $archiveTests = Join-Path (Get-Location) 'codexs/update/archive.Tests.ps1'
+          & ([scriptblock]::Create([IO.File]::ReadAllText($archiveTests)))
+          $global:LASTEXITCODE = 0
+
       - name: Check status-line Rust formatting
         working-directory: codex-rs
         run: |
@@ -552,15 +633,29 @@ jobs:
         id: scope
         env:
           MATRIX_SCOPE: ${{ matrix.scope }}
+          CALLER_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CALLER_BASELINE_SHA: ${{ inputs.baseline_sha }}
+          CALLER_VALIDATION_ID: ${{ inputs.validation_id }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $scope = $env:MATRIX_SCOPE
           if ($scope -cnotin @('feature', 'full', 'baseline', 'build', 'triage-full', 'triage-baseline', 'config', 'config-baseline')) { throw "Unsupported scope: $scope" }
-          $sourceRef = if ($scope -cin @('baseline','triage-baseline','config-baseline')) { '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e' } else { $env:GITHUB_SHA }
-          $logDir = Join-Path $env:RUNNER_TEMP "codexs-statusline-$scope-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $hasCaller = -not [string]::IsNullOrEmpty($env:CALLER_CANDIDATE_SHA) -or -not [string]::IsNullOrEmpty($env:CALLER_BASELINE_SHA) -or -not [string]::IsNullOrEmpty($env:CALLER_VALIDATION_ID)
+          if ($hasCaller) {
+            if ($env:CALLER_CANDIDATE_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:CALLER_BASELINE_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid reusable source identity' }
+            if ($env:CALLER_VALIDATION_ID -cnotmatch '^[a-z][a-z0-9-]{0,31}$') { throw 'Unsafe validation invocation identity' }
+          }
+          $baselineRef = if ($hasCaller) { $env:CALLER_BASELINE_SHA } else { '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e' }
+          $candidateRef = if ($hasCaller) { $env:CALLER_CANDIDATE_SHA } else { $env:GITHUB_SHA }
+          $sourceRef = if ($scope -cin @('baseline','triage-baseline','config-baseline')) { $baselineRef } else { $candidateRef }
+          $suffix = if ($hasCaller) { "$env:CALLER_VALIDATION_ID-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" } else { "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" }
+          $logDir = Join-Path $env:RUNNER_TEMP "codexs-statusline-$scope-$suffix"
           New-Item -ItemType Directory -Path $logDir -ErrorAction Stop | Out-Null
           "scope=$scope" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           "source_ref=$sourceRef" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "artifact_suffix=$suffix" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           "CODEXS_SCOPE=$scope" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          "CODEXS_EXPECTED_SOURCE_SHA=$sourceRef" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "CODEXS_LOG_DIR=$logDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Checkout selected source
@@ -594,9 +689,14 @@ jobs:
             $sha = (& git rev-parse HEAD).Trim()
             $gitExit = $LASTEXITCODE
             if ($gitExit -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot verify source SHA' }
-            if ($env:CODEXS_SCOPE -cin @('baseline','triage-baseline','config-baseline') -and $sha -cne '1ee2374c675b1aeae8ca76e1c6c75a6a62619f8e') { throw "Wrong baseline source: $sha" }
-            $workspaceVersion = Select-String -LiteralPath Cargo.toml -Pattern '^version = "0\.162\.1"$' | Select-Object -First 1
-            if (-not $workspaceVersion) { throw 'Unexpected Codex workspace version' }
+            if ($env:CODEXS_EXPECTED_SOURCE_SHA -cnotmatch '^[a-f0-9]{40}$' -or $sha -cne $env:CODEXS_EXPECTED_SOURCE_SHA) { throw 'Checkout does not match the selected immutable source' }
+            $manifest = Get-Content -LiteralPath Cargo.toml -Raw
+            $packageSections = [regex]::Matches($manifest, '(?ms)^\[workspace\.package\]\s*\r?\n(?<section>.*?)(?=^\[|\z)')
+            if ($packageSections.Count -ne 1) { throw 'Missing or ambiguous workspace package version' }
+            $versionLines = @($packageSections[0].Groups['section'].Value -split '\r?\n' | Where-Object { $_ -cmatch '^version\s*=' })
+            if ($versionLines.Count -ne 1 -or $versionLines[0] -cnotmatch '^version\s*=\s*"(?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))"[ \t]*(?:#.*)?$') { throw 'Invalid stable workspace version' }
+            $workspaceVersion = $Matches['version']
+            if ($workspaceVersion -ceq '0.0.0') { throw 'Development workspace version is not release evidence' }
             $toolchain = Get-Content -LiteralPath rust-toolchain.toml -Raw
             $pinLines = @($toolchain -split '\r?\n' | Where-Object { $_ -cmatch '^\s*channel\s*=' })
             if ($pinLines.Count -ne 1 -or $pinLines[0] -cnotmatch '^\s*channel\s*=\s*"1\.95\.0"\s*$') { throw 'Unexpected source Rust pin' }
@@ -612,6 +712,7 @@ jobs:
             New-Item -ItemType Directory -Path $target -ErrorAction Stop | Out-Null
             "CARGO_TARGET_DIR=$target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             "CODEXS_SOURCE_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+            "CODEXS_WORKSPACE_VERSION=$workspaceVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
             "source=$sha scope=$env:CODEXS_SCOPE rust=$rustVersion target=$target" | Out-File -LiteralPath $setupLog -Encoding utf8 -Append
             foreach ($drive in $drives) { "drive=$($drive.Name) available_bytes=$($drive.AvailableFreeSpace)" | Out-File -LiteralPath $setupLog -Encoding utf8 -Append }
           } catch {
@@ -643,6 +744,7 @@ jobs:
           $state = Get-Content -LiteralPath $env:CODEXS_GUARD_STATE -Raw | ConvertFrom-Json
           try {
             Set-Location -LiteralPath $state.workdir
+            if ($state.scope -eq 'build' -and ($state.workspace_version -isnot [string] -or $state.workspace_version -cnotmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or $state.workspace_version -ceq '0.0.0')) { throw 'Missing or invalid expected source version' }
             [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
             $OutputEncoding = [Console]::OutputEncoding
             $rustup = (Get-Command rustup.exe -ErrorAction Stop).Source
@@ -729,7 +831,7 @@ jobs:
               Write-Host $versionLog
               $versionLog | Out-File -LiteralPath $state.cargo_log -Encoding utf8 -Append
               if ($null -eq $versionExit -or $versionExit -ne 0 -or $versionLines.Count -ne 1 -or
-                  $versionLines[0] -cnotmatch '^codex(?:-cli)? 0\.162\.1$') { throw 'Built CLI version validation failed' }
+                  $versionLines[0] -cnotmatch ('^codex(?:-cli)? ' + [regex]::Escape($state.workspace_version) + '$')) { throw 'Built CLI version validation failed' }
             }
             exit $nativeExit
           } catch {
@@ -1053,6 +1155,7 @@ jobs:
             done_path=$donePath; stop_path=$stopPath; runner_path=$runnerPath; cargo_log=$outPath
             native_exit=$exitPath; runner_error=$runnerErrorPath
             scope=$env:CODEXS_SCOPE; source_sha=$env:CODEXS_SOURCE_SHA
+            workspace_version=$env:CODEXS_WORKSPACE_VERSION
           }
           $state | ConvertTo-Json -Compress | Out-File -LiteralPath $statePath -Encoding utf8
           $env:CODEXS_GUARD_STATE = $statePath
@@ -1125,6 +1228,7 @@ jobs:
           if ($wrapperProblem -or $guardReason -ne 'none' -or $null -eq $nativeExit) { throw "Hosted validation did not complete normally: $outcome" }
           if ($nativeExit -ne 0) { throw "Cargo failed: $outcome" }
           if ($env:CODEXS_SCOPE -eq 'feature' -and $testCount -le 0) { throw "Feature filter ran zero tests: $outcome" }
+          if ($env:CODEXS_SCOPE -cin @('full','baseline') -and ($passed -le 0 -or $testCount -le 0 -or $failed -ne 0)) { throw "Full validation must discover passing tests without failures: $outcome" }
           if ($env:CODEXS_SCOPE -cin @('config','config-baseline') -and ($passed + $failed -le 0 -or $failed -ne 0)) { throw "Config validation must execute tests without failures: $outcome" }
           if ($env:CODEXS_SCOPE -cin @('triage-full','triage-baseline') -and ($testCount -ne 11 -or $ignored -ne 0)) { throw "Triage must run all eleven diagnostic tests without ignores: $outcome" }
 
@@ -1143,7 +1247,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: codexs-statusline-${{ matrix.scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codexs-statusline-${{ matrix.scope }}-${{ steps.scope.outputs.artifact_suffix }}
           path: ${{ runner.temp }}\codexs-statusline-${{ matrix.scope }}-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: warn
           retention-days: 14
@@ -1152,7 +1256,7 @@ jobs:
         if: always() && env.CARGO_TARGET_DIR != ''
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: codexs-timings-${{ matrix.scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codexs-timings-${{ matrix.scope }}-${{ steps.scope.outputs.artifact_suffix }}
           path: ${{ env.CARGO_TARGET_DIR }}/cargo-timings/*.html
           if-no-files-found: warn
           retention-days: 14
@@ -1161,7 +1265,7 @@ jobs:
         if: success() && steps.scope.outputs.scope == 'build'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: codexs-cli-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codexs-cli-${{ steps.scope.outputs.artifact_suffix }}
           path: ${{ env.CARGO_TARGET_DIR }}/release/codex.exe
           if-no-files-found: error
           retention-days: 7
