@@ -1,4 +1,5 @@
 use super::*;
+use codex_app_server_protocol::ThreadItemPayload;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -493,8 +494,8 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
                     ServerNotification::ItemStarted(notification)
                         if notification.thread_id == thread_id.to_string()
                             && matches!(
-                                &notification.item,
-                                codex_app_server_protocol::ThreadItem::CommandExecution { .. }
+                                &notification.item.payload,
+                                ThreadItemPayload::CommandExecution { .. }
                             ) =>
                     {
                         readiness_command_started = true;

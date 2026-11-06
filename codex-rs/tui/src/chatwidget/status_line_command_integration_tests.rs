@@ -6,6 +6,8 @@ use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
 use crate::status_line_command::*;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
+use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadItemPayload;
 use codex_app_server_protocol::TurnItemsView;
 use codex_app_server_protocol::TurnStartedNotification;
 use ratatui::buffer::Buffer;
@@ -357,7 +359,7 @@ fn end(chat: &mut ChatWidget, id: &str, status: TurnStatus, replay: Option<Repla
 }
 
 fn compaction(chat: &mut ChatWidget, id: &str, completed: bool, replay: Option<ReplayKind>) {
-    let item = ThreadItem::ContextCompaction { id: id.into() };
+    let item = ThreadItem::untimed(ThreadItemPayload::ContextCompaction { id: id.into() });
     let thread_id = chat.thread_id.unwrap().to_string();
     let event = if completed {
         ServerNotification::ItemCompleted(ItemCompletedNotification {
