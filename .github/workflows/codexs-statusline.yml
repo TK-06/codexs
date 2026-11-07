@@ -666,6 +666,37 @@ jobs:
           persist-credentials: false
           ref: ${{ steps.scope.outputs.source_ref }}
 
+      - name: Check hosted pagefile disk capacity
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='D:'" -ErrorAction Stop
+          if ($null -eq $disk -or $disk.DeviceID -ine 'D:' -or $disk.DriveType -ne 3 -or $null -eq $disk.FreeSpace) { throw 'Hosted pagefile requires a readable fixed D: drive' }
+          $free = [long]$disk.FreeSpace
+          "pagefile_preflight disk=D: free_bytes=$free allocation_bytes=34359738368 reserve_bytes=8589934592" |
+            Tee-Object -FilePath (Join-Path $env:CODEXS_LOG_DIR 'memory-capacity.log')
+          if ($free -lt 40GB) { throw 'Hosted pagefile needs 32 GiB plus the 8 GiB disk reserve on D:' }
+
+      - name: Configure hosted pagefile
+        uses: al-cheb/configure-pagefile-action@9b6da52fb72a3c6147c1aad2df22d8d905681adc # v1.5
+        with:
+          minimum-size: 32GB
+          maximum-size: 32GB
+          disk-root: 'D:'
+
+      - name: Verify hosted memory capacity
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pages = @(Get-CimInstance Win32_PageFileUsage -ErrorAction Stop | Where-Object { $_.Name -ieq 'D:\pagefile.sys' })
+          $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+          $allocated = if ($pages.Count -eq 1) { [long]$pages[0].AllocatedBaseSize } else { 0 }
+          $freeVirtual = [long]$os.FreeVirtualMemory * 1024
+          $freePhysical = [long]$os.FreePhysicalMemory * 1024
+          $totalVirtual = [long]$os.TotalVirtualMemorySize * 1024
+          "pagefile_effective disk=D: allocated_mib=$allocated free_virtual_bytes=$freeVirtual free_physical_bytes=$freePhysical total_virtual_bytes=$totalVirtual" |
+            Tee-Object -FilePath (Join-Path $env:CODEXS_LOG_DIR 'memory-capacity.log') -Append
+          if ($allocated -lt 32768) { throw 'Effective D: pagefile is below the required 32 GiB' }
+          if ($freePhysical -le 0 -or $totalVirtual -le 0 -or $freeVirtual -lt 24GB) { throw 'Hosted runner requires readable memory counters and at least 24 GiB of free virtual memory before Cargo' }
+
       - name: Install pinned Rust
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
@@ -901,6 +932,29 @@ jobs:
               Note "member pid=$memberPid ticks=$ticks parent=$parent name=$name"
             }
           }
+          function WriteProcessMemory([switch]$Force) {
+            if (-not $job) { return }
+            $now = [datetime]::UtcNow
+            if (-not $Force -and $null -ne $script:lastMemorySample -and ($now - $script:lastMemorySample).TotalSeconds -lt 30) { return }
+            $script:lastMemorySample = $now
+            $samples = @()
+            foreach ($memberPid in @($job.ActiveProcessIds())) {
+              try {
+                $p = Get-Process -Id $memberPid -ErrorAction SilentlyContinue
+                if (-not $p -or -not $seen.ContainsKey([int]$memberPid)) { continue }
+                $ticks = $p.StartTime.ToUniversalTime().Ticks
+                if ($seen[[int]$memberPid].ticks -ne $ticks) { continue }
+                $samples += [pscustomobject]@{
+                  pid=[int]$memberPid; ticks=$ticks; name=$p.ProcessName
+                  private_bytes=[long]$p.PrivateMemorySize64; working_set_bytes=[long]$p.WorkingSet64
+                  peak_working_set_bytes=[long]$p.PeakWorkingSet64
+                }
+              } catch { continue } # A process may exit while its counters are read.
+            }
+            foreach ($sample in @($samples | Sort-Object private_bytes -Descending | Select-Object -First 8)) {
+              Note "process_memory pid=$($sample.pid) ticks=$($sample.ticks) name=$($sample.name) private_bytes=$($sample.private_bytes) working_set_bytes=$($sample.working_set_bytes) peak_working_set_bytes=$($sample.peak_working_set_bytes)"
+            }
+          }
           $nativeSource = @"
           using System;
           using System.Collections.Generic;
@@ -1116,6 +1170,7 @@ jobs:
             while ($true) {
               CheckOwner
               TrackMembers
+              WriteProcessMemory
               CheckResources
               if ($job.Wait(1000)) { Note 'runner_exited'; break }
             }
@@ -1125,6 +1180,7 @@ jobs:
           } finally {
             if ($job) {
               try { TrackMembers } catch { $cleanupProblem = "member enumeration failed: $($_.Exception.Message)" }
+              try { WriteProcessMemory -Force } catch { Note "process_memory_unavailable $($_.Exception.Message)" }
               $job.Dispose() # The OS terminates the entire transitive process tree, including reparented descendants.
               Note "job_closed tracked_count=$($seen.Count)"
               for ($attempt = 0; $attempt -lt 15; $attempt++) {

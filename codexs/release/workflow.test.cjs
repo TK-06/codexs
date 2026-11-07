@@ -32,18 +32,18 @@ function step(name) {
   return { body: body.join('\n'), bindings };
 }
 
-function execute(name, context = {}, extra = {}, inspect) {
+function execute(name, context = {}, extra = {}, inspect, prelude = '') {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexs-workflow-test-'));
   try {
     const selected = step(name);
     const env = {
       ...process.env, GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_SHA: 'd'.repeat(40),
       GITHUB_RUN_ID: '101', GITHUB_RUN_ATTEMPT: '1', GITHUB_REPOSITORY: 'TK-06/codexs',
-      RUNNER_TEMP: directory, GITHUB_OUTPUT: path.join(directory, 'outputs'), GITHUB_ENV: path.join(directory, 'environment'),
+      RUNNER_TEMP: directory, CODEXS_LOG_DIR: directory, GITHUB_OUTPUT: path.join(directory, 'outputs'), GITHUB_ENV: path.join(directory, 'environment'),
       ...extra,
     };
     for (const [key, [group, field]] of Object.entries(selected.bindings)) env[key] = context[group]?.[field] || '';
-    const encoded = Buffer.from(selected.body, 'utf16le').toString('base64');
+    const encoded = Buffer.from(prelude + '\n' + selected.body, 'utf16le').toString('base64');
     const result = spawnSync(path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { env, cwd: root, windowsHide: true, encoding: 'utf8', timeout: 10000 });
     const outputs = fs.existsSync(env.GITHUB_OUTPUT) ? fs.readFileSync(env.GITHUB_OUTPUT, 'utf8').replace(/^\uFEFF/, '') : '';
@@ -58,6 +58,121 @@ function execute(name, context = {}, extra = {}, inspect) {
 function caller(overrides = {}) {
   return { inputs: { candidate_sha: 'a'.repeat(40), baseline_sha: 'c'.repeat(40), validation_id: 'cleanup', scope: 'cleanup', ...overrides }, matrix: { scope: 'full' } };
 }
+
+// Break caught: an ineffective pagefile change wastes a full compilation or
+// consumes the disk reserve. Only CIM readings are substituted; the actual gates run.
+function memoryGate(name, readings, inspect) {
+  const encoded = Buffer.from(JSON.stringify(readings)).toString('base64');
+  const prelude = `
+$fixture = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json
+function Get-CimInstance($ClassName) {
+  if ($ClassName -eq 'Win32_LogicalDisk') { return $fixture.disk }
+  if ($ClassName -eq 'Win32_PageFileUsage') { return $fixture.pagefiles }
+  if ($ClassName -eq 'Win32_OperatingSystem') { return $fixture.os }
+  throw 'Unexpected CIM query'
+}
+`;
+  return execute(name, {}, {}, inspect, prelude);
+}
+
+function capacity(overrides = {}) {
+  return {
+    disk: { DeviceID: 'D:', DriveType: 3, FreeSpace: 42949672960 },
+    pagefiles: [{ Name: 'D:\\pagefile.sys', AllocatedBaseSize: 32768 }],
+    os: { FreeVirtualMemory: 25165824, FreePhysicalMemory: 8388608, TotalVirtualMemorySize: 50331648 },
+    ...overrides,
+  };
+}
+
+test('hosted pagefile allocation preserves the disk reserve and fails closed on invalid readings', () => {
+  assert.equal(memoryGate('Check hosted pagefile disk capacity', capacity()).status, 0);
+  for (const disk of [null, { DeviceID: 'D:', DriveType: 3, FreeSpace: 42949672959 },
+    { DeviceID: 'C:', DriveType: 3, FreeSpace: 99999999999 },
+    { DeviceID: 'D:', DriveType: 2, FreeSpace: 99999999999 }]) {
+    const result = memoryGate('Check hosted pagefile disk capacity', capacity({ disk }));
+    assert.notEqual(result.status, 0, 'unsafe allocation must fail before the action runs');
+  }
+});
+
+test('hosted memory verification requires the effective D pagefile and usable virtual headroom', () => {
+  const result = memoryGate('Verify hosted memory capacity', capacity(), ({ result, env }) => {
+    assert.equal(result.status, 0, result.stderr);
+    const bytes = fs.readFileSync(path.join(env.CODEXS_LOG_DIR, 'memory-capacity.log'));
+    const log = bytes.toString(bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf16le' : 'utf8');
+    assert.match(log, /allocated_mib=32768/);
+    assert.match(log, /free_virtual_bytes=25769803776/);
+    assert.match(log, /free_physical_bytes=8589934592/);
+  });
+  assert.equal(result.status, 0);
+  for (const readings of [
+    { pagefiles: [] },
+    { pagefiles: [{ Name: 'C:\\pagefile.sys', AllocatedBaseSize: 32768 }] },
+    { pagefiles: [{ Name: 'D:\\pagefile.sys', AllocatedBaseSize: 32767 }] },
+    { os: { FreeVirtualMemory: 25165823, FreePhysicalMemory: 8388608, TotalVirtualMemorySize: 50331648 } },
+    { os: null },
+  ]) {
+    assert.notEqual(memoryGate('Verify hosted memory capacity', capacity(readings)).status, 0,
+      'ineffective allocation or missing memory reading must stop before Cargo');
+  }
+});
+
+test('only hosted native jobs allocate the pinned pagefile before verifying memory and starting Cargo', () => {
+  const windows = source.slice(source.indexOf('\n  windows:'));
+  const allocation = windows.match(/      - name: Configure hosted pagefile\r?\n(?<body>.*?)(?=      - name:)/s);
+  assert.ok(allocation, 'missing hosted allocation');
+  assert.match(allocation.groups.body, /uses: al-cheb\/configure-pagefile-action@9b6da52fb72a3c6147c1aad2df22d8d905681adc/);
+  const values = Object.fromEntries([...allocation.groups.body.matchAll(/^          ([a-z-]+): ['"]?([^'"\r\n]+)['"]?$/gm)]
+    .map(match => [match[1], match[2]]));
+  assert.deepEqual(values, { 'minimum-size': '32GB', 'maximum-size': '32GB', 'disk-root': 'D:' });
+  const names = ['Check hosted pagefile disk capacity', 'Configure hosted pagefile', 'Verify hosted memory capacity', 'Run guarded native Cargo operation'];
+  const indices = names.map(name => windows.indexOf(`      - name: ${name}`));
+  assert.ok(indices.every((index, i) => index >= 0 && (i === 0 || index > indices[i - 1])));
+  assert.ok(!source.slice(0, source.indexOf('\n  windows:')).includes('configure-pagefile-action'));
+});
+
+test('guard diagnostics bound owned process memory samples and retain a final snapshot before cleanup', () => {
+  const native = step('Run guarded native Cargo operation').body;
+  const guard = native.match(/^\$guardSource = @'\n(?<body>.*?)^'@/ms)?.groups.body;
+  assert.ok(guard);
+  const start = guard.indexOf('$job = $null');
+  const end = guard.indexOf('$nativeSource =');
+  const functions = guard.slice(start, end);
+  assert.ok(functions.includes('function WriteProcessMemory'), 'missing owned-process memory diagnostics');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexs-workflow-test-'));
+  try {
+    const script = functions + `
+$log = Join-Path $env:CODEXS_PROBE_ROOT 'memory.log'
+$job = New-Object psobject
+$job | Add-Member ScriptMethod ActiveProcessIds { return (1..16) }
+$stamp = [datetime]::UtcNow
+foreach ($id in 1..15) { $seen[$id] = @{ ticks=$stamp.Ticks } }
+function Get-Process($Id) {
+  if ($Id -eq 15) { return $null }
+  $started = if ($Id -eq 14) { $stamp.AddSeconds(1) } else { $stamp }
+  [pscustomobject]@{ Id=$Id; StartTime=$started; ProcessName='synthetic'; PrivateMemorySize64=($Id * 1MB); WorkingSet64=($Id * 2MB); PeakWorkingSet64=($Id * 3MB) }
+}
+WriteProcessMemory
+WriteProcessMemory
+WriteProcessMemory -Force
+`;
+    const result = spawnSync(path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from("$ErrorActionPreference='Stop';\n" + script, 'utf16le').toString('base64')],
+      { env: { ...process.env, CODEXS_PROBE_ROOT: directory }, windowsHide: true, encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, 0, result.stderr);
+    const lines = fs.readFileSync(path.join(directory, 'memory.log'), 'utf8').split(/\r?\n/).filter(line => line.includes('process_memory '));
+    assert.equal(lines.length, 16, 'two snapshots of eight; the immediate periodic call must be throttled');
+    const ids = lines.slice(0, 8).map(line => Number(line.match(/pid=(\d+)/)?.[1]));
+    assert.deepEqual(ids, [13, 12, 11, 10, 9, 8, 7, 6], 'only highest owned live identities belong in the bounded snapshot');
+    assert.match(lines[0], /private_bytes=13631488 working_set_bytes=27262976 peak_working_set_bytes=40894464/);
+    const loop = guard.slice(guard.indexOf('while ($true)'));
+    assert.ok(loop.indexOf('WriteProcessMemory') >= 0 && loop.indexOf('WriteProcessMemory') < loop.indexOf('CheckResources'));
+    const final = guard.slice(guard.indexOf('} finally {', guard.indexOf('GUARD_STOP')));
+    assert.ok(final.indexOf('WriteProcessMemory -Force') >= 0 && final.indexOf('WriteProcessMemory -Force') < final.indexOf('$job.Dispose()'));
+  } finally {
+    if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('codexs-workflow-test-')) throw Error('Unsafe diagnostics test cleanup');
+    fs.rmSync(directory, { recursive: true });
+  }
+});
 
 test('reusable cleanup accepts the original scheduled event with immutable caller inputs', () => {
   const result = execute('Resolve execution scopes', caller(), { GITHUB_EVENT_NAME: 'schedule' });
