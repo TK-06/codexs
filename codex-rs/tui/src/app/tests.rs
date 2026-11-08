@@ -3138,6 +3138,14 @@ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()
     let (mut app, mut app_event_rx, _op_rx) =
         bounded("create-app", make_test_app_with_channels()).await;
     let config = app.chat_widget.config_ref().clone();
+    // Choose the fixture folder and trust explicitly so navigation needs no terminal input.
+    app.harness_overrides.cwd = Some(config.cwd.to_path_buf());
+    crate::legacy_core::config::set_project_trust_level(
+        config.codex_home.as_path(),
+        config.cwd.as_path(),
+        codex_protocol::config_types::TrustLevel::Trusted,
+    )
+    .map_err(std::io::Error::other)?;
     let parent_thread_id = ThreadId::from_string(
         &app_test_support::create_fake_rollout(
             config.codex_home.as_path(),
