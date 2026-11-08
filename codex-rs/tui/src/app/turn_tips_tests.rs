@@ -282,7 +282,7 @@ async fn turn_tip_placements_and_completion_barrier() -> Result<()> {
             assert_eq!(app.turn_tips.completions_shown, usize::from(!working));
         }
         if !working && shown {
-            if rows == 1 && size == tui.terminal.size()? {
+            if rows == 1 && size == Size::new(80, 24) {
                 app.local_settings.tui.copy_on_select = CopyOnSelect::Always;
                 let (row, line) = screen
                     .lines()
