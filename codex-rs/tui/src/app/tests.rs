@@ -3121,7 +3121,22 @@ async fn refresh_agent_picker_thread_liveness_prunes_closed_metadata_only_thread
 
 #[tokio::test]
 async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()> {
-    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    async fn bounded<T>(phase: &str, operation: impl std::future::Future<Output = T>) -> T {
+        use std::io::Write as _;
+
+        // Bypass libtest capture so a blocked step remains visible in the CI log.
+        let _ = writeln!(std::io::stderr(), "codexs_side_test phase={phase} started");
+        let result = time::timeout(std::time::Duration::from_secs(60), Box::pin(operation))
+            .await
+            .unwrap_or_else(|_| {
+                panic!("side-conversation fixture timed out after 60s during {phase}")
+            });
+        let _ = writeln!(std::io::stderr(), "codexs_side_test phase={phase} completed");
+        result
+    }
+
+    let (mut app, mut app_event_rx, _op_rx) =
+        bounded("create-app", make_test_app_with_channels()).await;
     let config = app.chat_widget.config_ref().clone();
     let parent_thread_id = ThreadId::from_string(
         &app_test_support::create_fake_rollout(
@@ -3145,40 +3160,55 @@ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()
         )
         .expect("create other rollout"),
     )?;
-    let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&config)).await?;
-    let started = app_server
-        .resume_thread(
+    let mut app_server = bounded(
+        "start-embedded-server",
+        crate::start_embedded_app_server_for_picker(&config),
+    )
+    .await?;
+    let started = bounded(
+        "resume-parent",
+        app_server.resume_thread(
             &crate::local_settings::LocalSettings::from(&config),
             config,
             parent_thread_id,
             crate::app_server_session::ResumeModelSettings::RestoreFromThread,
-        )
-        .await?;
-    app.enqueue_primary_thread_session(started.session, started.turns)
-        .await?;
+        ),
+    )
+    .await?;
+    bounded(
+        "enqueue-parent-session",
+        app.enqueue_primary_thread_session(started.session, started.turns),
+    )
+    .await?;
     while app_event_rx.try_recv().is_ok() {}
     let mut tui = crate::tui::test_support::make_test_tui()?;
 
     app.runtime_permission_profile_override = Some(RuntimePermissionProfileOverride::from_config(
         app.chat_widget.config_ref(),
     ));
-    app.select_permission_profile(
-        &mut app_server,
-        PermissionProfileSelection {
-            profile_id: ":read-only".into(),
-            approval_policy: Some(AskForApproval::OnRequest),
-            approvals_reviewer: Some(ApprovalsReviewer::User),
-            display_label: "Read Only".into(),
-        },
+    bounded(
+        "select-read-only",
+        app.select_permission_profile(
+            &mut app_server,
+            PermissionProfileSelection {
+                profile_id: ":read-only".into(),
+                approval_policy: Some(AskForApproval::OnRequest),
+                approvals_reviewer: Some(ApprovalsReviewer::User),
+                display_label: "Read Only".into(),
+            },
+        ),
     )
     .await;
 
-    let control = Box::pin(app.handle_start_side(
-        &mut tui,
-        &mut app_server,
-        parent_thread_id,
-        /*user_message*/ None,
-    ))
+    let control = bounded(
+        "start-side",
+        app.handle_start_side(
+            &mut tui,
+            &mut app_server,
+            parent_thread_id,
+            /*user_message*/ None,
+        ),
+    )
     .await?;
 
     let side_thread_id = app
@@ -3225,41 +3255,69 @@ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()
             app.chat_widget.config_ref()
         ))
     );
-    app.select_agents_overview_thread(&mut tui, &mut app_server, other_thread_id)
-        .await?;
-    app.select_agents_overview_thread(&mut tui, &mut app_server, parent_thread_id)
-        .await?;
-    Box::pin(app.handle_start_side(
-        &mut tui,
-        &mut app_server,
-        parent_thread_id,
-        /*user_message*/ None,
-    ))
+    bounded(
+        "select-other-thread",
+        app.select_agents_overview_thread(&mut tui, &mut app_server, other_thread_id),
+    )
+    .await?;
+    bounded(
+        "return-to-parent",
+        app.select_agents_overview_thread(&mut tui, &mut app_server, parent_thread_id),
+    )
+    .await?;
+    bounded(
+        "reuse-side",
+        app.handle_start_side(
+            &mut tui,
+            &mut app_server,
+            parent_thread_id,
+            /*user_message*/ None,
+        ),
+    )
     .await?;
     assert_eq!(app.active_thread_id, Some(side_thread_id));
     assert_eq!(app.side_threads.len(), 1);
-    app.select_agent_thread(&mut tui, &mut app_server, parent_thread_id)
-        .await?;
-    app.select_permission_profile(
-        &mut app_server,
-        PermissionProfileSelection {
-            profile_id: ":workspace".into(),
-            approval_policy: Some(AskForApproval::OnRequest),
-            approvals_reviewer: Some(ApprovalsReviewer::User),
-            display_label: "Workspace".into(),
-        },
-    )
-    .await;
-    app.select_agent_thread(&mut tui, &mut app_server, side_thread_id)
-        .await?;
-    let settings = next_thread_settings_updated(&mut app_server, parent_thread_id).await;
-    app.enqueue_thread_notification(
-        parent_thread_id,
-        ServerNotification::ThreadSettingsUpdated(settings),
+    bounded(
+        "select-parent-for-permissions",
+        app.select_agent_thread(&mut tui, &mut app_server, parent_thread_id),
     )
     .await?;
-    app.select_agent_thread(&mut tui, &mut app_server, parent_thread_id)
-        .await?;
+    bounded(
+        "select-workspace-permissions",
+        app.select_permission_profile(
+            &mut app_server,
+            PermissionProfileSelection {
+                profile_id: ":workspace".into(),
+                approval_policy: Some(AskForApproval::OnRequest),
+                approvals_reviewer: Some(ApprovalsReviewer::User),
+                display_label: "Workspace".into(),
+            },
+        ),
+    )
+    .await;
+    bounded(
+        "select-side-for-notification",
+        app.select_agent_thread(&mut tui, &mut app_server, side_thread_id),
+    )
+    .await?;
+    let settings = bounded(
+        "wait-parent-settings",
+        next_thread_settings_updated(&mut app_server, parent_thread_id),
+    )
+    .await;
+    bounded(
+        "enqueue-parent-settings",
+        app.enqueue_thread_notification(
+            parent_thread_id,
+            ServerNotification::ThreadSettingsUpdated(settings),
+        ),
+    )
+    .await?;
+    bounded(
+        "return-to-parent-after-settings",
+        app.select_agent_thread(&mut tui, &mut app_server, parent_thread_id),
+    )
+    .await?;
     assert_eq!(
         app.config
             .permissions
@@ -3275,7 +3333,7 @@ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()
         ))
     );
 
-    app_server.shutdown().await?;
+    bounded("shutdown-server", app_server.shutdown()).await?;
     Ok(())
 }
 
