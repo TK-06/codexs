@@ -1037,6 +1037,15 @@ fn stage_str(stage: Stage) -> &'static str {
 }
 
 fn main() -> anyhow::Result<()> {
+    let mut smoke_args = std::env::args_os();
+    let argv0 = PathBuf::from(smoke_args.next().unwrap_or_default());
+    let helper_alias = matches!(
+        argv0.file_stem().and_then(|name| name.to_str()),
+        Some("apply_patch" | "applypatch" | "codex-linux-sandbox")
+    );
+    if !helper_alias && smoke_args.next().as_deref() == Some(std::ffi::OsStr::new("codexs-smoke")) {
+        return codexs_smoke_main(smoke_args.collect());
+    }
     codex_build_info::initialize!();
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
@@ -1044,6 +1053,35 @@ fn main() -> anyhow::Result<()> {
         Box::pin(cli_main(arg0_paths, remote_control_disabled)).await?;
         Ok(())
     })
+}
+
+fn codexs_smoke_main(args: Vec<std::ffi::OsString>) -> anyhow::Result<()> {
+    let mut node = None;
+    let mut formatter = None;
+    let mut args = args.into_iter();
+    while let Some(flag) = args.next() {
+        let value = args.next().map(PathBuf::from);
+        match flag.to_str() {
+            Some("--node") if node.is_none() => node = value,
+            Some("--formatter") if formatter.is_none() => formatter = value,
+            _ => anyhow::bail!("SMOKE_ARGS"),
+        }
+    }
+    let (Some(node), Some(formatter)) = (node, formatter) else {
+        anyhow::bail!("SMOKE_ARGS");
+    };
+    if !node.is_absolute() || !formatter.is_absolute() || !node.is_file() || !formatter.is_file() {
+        anyhow::bail!("SMOKE_ARGS");
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| anyhow::anyhow!("SMOKE_RUNTIME"))?;
+    runtime
+        .block_on(codex_tui::run_codexs_smoke(node, formatter))
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    println!("{{\"schema\":1,\"runner\":\"ok\",\"formatter\":\"ok\",\"cleanup\":\"ok\"}}");
+    Ok(())
 }
 
 async fn cli_main(

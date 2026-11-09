@@ -221,6 +221,8 @@ mod startup_presentation;
 mod startup_recovery;
 mod status;
 mod status_line_command;
+mod status_line_command_smoke;
+pub use status_line_command_smoke::run_codexs_smoke;
 mod status_indicator_widget;
 mod streaming;
 mod style;
