@@ -288,6 +288,14 @@ jobs:
           using System.IO;
           public static class CodexsVersionBoundaryProbe {
               public static int Main(string[] args) {
+                  if (args.Length > 0 && args[0] == "codexs-smoke") {
+                      if (args.Length == 1 || Array.IndexOf(args, "--unknown") >= 0) { Console.Error.WriteLine("SMOKE_ARGS"); return 1; }
+                      int index = Array.IndexOf(args, "--formatter");
+                      if (index < 0 || index + 1 >= args.Length) { return 1; }
+                      if (Path.GetFileName(args[index + 1]).StartsWith("wrong")) { Console.Error.WriteLine("SMOKE_OUTPUT"); return 1; }
+                      Console.WriteLine("{\"schema\":1,\"runner\":\"ok\",\"formatter\":\"ok\",\"cleanup\":\"ok\"}");
+                      return 0;
+                  }
                   File.WriteAllLines(Environment.GetEnvironmentVariable("CODEXS_PROBE_VERSION_ARGS"), args);
                   if (Environment.GetEnvironmentVariable("CODEXS_PROBE_VERSION_EMPTY") != "1") {
                       Console.WriteLine(Environment.GetEnvironmentVariable("CODEXS_PROBE_VERSION_TEXT") ?? "codex-cli 0.162.1");
@@ -775,6 +783,73 @@ jobs:
           $runnerSource = @'
           $ErrorActionPreference = 'Stop'
           $state = Get-Content -LiteralPath $env:CODEXS_GUARD_STATE -Raw | ConvertFrom-Json
+          function Invoke-CodexsSmokeGate {
+            param([Parameter(Mandatory=$true)][string]$Binary)
+            $node = (Get-Command node.exe -ErrorAction Stop).Source
+            if (-not [IO.Path]::IsPathRooted($node) -or -not (Test-Path -LiteralPath $node -PathType Leaf)) { throw 'SMOKE_NODE_REQUIRED' }
+            $probeRoot = Join-Path $env:RUNNER_TEMP ('codexs-smoke-gate-' + [guid]::NewGuid().ToString('N'))
+            $smokeHome = Join-Path $probeRoot 'malformed synthetic home'
+            [void][IO.Directory]::CreateDirectory($smokeHome)
+            $utf8 = New-Object Text.UTF8Encoding($false)
+            $sentinels = @{'config.toml'='malformed = ['; 'auth.json'='{malformed'; '.env'='CODEXS_SMOKE_DOTENV_TRIPWIRE=loaded'}
+            foreach ($name in $sentinels.Keys) { [IO.File]::WriteAllText((Join-Path $smokeHome $name),$sentinels[$name],$utf8) }
+            # Keep the generated -File script ASCII for PS 5.1; construct Unicode as data.
+            $unicode = -join @([char]0x0E44,[char]0x0E17,[char]0x0E22)
+            $formatter = Join-Path $probeRoot ("ok formatter % ! & " + $unicode + " ' fixture.cjs")
+            $wrong = Join-Path $probeRoot 'wrong formatter.cjs'
+            $fixture = 'const fs=require("node:fs"),path=require("node:path");let text="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>text+=c);process.stdin.on("end",()=>{const p=JSON.parse(text);if(!p.codex||p.codex.schema!==1||process.argv.length!==4||process.argv[2]!=="--config"||process.env.CODEXS_SMOKE_DOTENV_TRIPWIRE!==undefined)process.exit(78);const c=JSON.parse(fs.readFileSync(process.argv[3],"utf8"));if(c.version!==4||c.lines[0][0].customText!=="codexs-smoke-ok"||fs.existsSync(path.join(process.env.CODEX_HOME,"auth.json")))process.exit(79);process.stdout.write("codexs-smoke-ok\n");});'
+            [IO.File]::WriteAllText($formatter,$fixture,$utf8)
+            [IO.File]::WriteAllText($wrong,'process.stdout.write("wrong-visible-footer\n");',$utf8)
+            $saved = @{}
+            foreach ($name in @('CODEX_HOME','HOME','USERPROFILE','CODEXS_SMOKE_DOTENV_TRIPWIRE')) { $saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process') }
+            try {
+              foreach ($name in @('CODEX_HOME','HOME','USERPROFILE')) { [Environment]::SetEnvironmentVariable($name,$smokeHome,'Process') }
+              [Environment]::SetEnvironmentVariable('CODEXS_SMOKE_DOTENV_TRIPWIRE',$null,'Process')
+              $cases = @(
+                @{id='success'; args=@('codexs-smoke','--node',$node,'--formatter',$formatter); success=$true},
+                @{id='missing'; args=@('codexs-smoke'); error='SMOKE_ARGS'},
+                @{id='unknown'; args=@('codexs-smoke','--node',$node,'--formatter',$formatter,'--unknown'); error='SMOKE_ARGS'},
+                @{id='wrong'; args=@('codexs-smoke','--node',$node,'--formatter',$wrong); error='SMOKE_OUTPUT'}
+              )
+              foreach ($case in $cases) {
+                $stdout = Join-Path $probeRoot ($case.id + '.out')
+                $stderr = Join-Path $probeRoot ($case.id + '.err')
+                # All arguments are fixed switches or absolute Windows file paths. Quotes cannot
+                # occur in those filenames; shell metacharacters remain ordinary CreateProcess data.
+                $quoted = @($case.args | ForEach-Object { '"' + $_ + '"' })
+                $process = Start-Process -FilePath $Binary -ArgumentList $quoted -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+                # Hold the process handle while it is running; PS 5.1 otherwise loses ExitCode.
+                $null = $process.Handle
+                try {
+                  $deadline = [DateTime]::UtcNow.AddSeconds(15)
+                  do {
+                    if ((Get-Item -LiteralPath $stdout).Length -gt 4096 -or (Get-Item -LiteralPath $stderr).Length -gt 4096) { throw 'SMOKE_DIAGNOSTIC_LIMIT' }
+                    if ([DateTime]::UtcNow -gt $deadline) { throw 'SMOKE_DIAGNOSTIC_TIMEOUT' }
+                  } while (-not $process.WaitForExit(50))
+                  $process.WaitForExit()
+                  $exit = $process.ExitCode
+                  $text = [IO.File]::ReadAllText($stdout)
+                  $errorText = [IO.File]::ReadAllText($stderr)
+                  if ($case.success) {
+                    $expected = '{"schema":1,"runner":"ok","formatter":"ok","cleanup":"ok"}'
+                    if ($null -eq $exit -or $exit -ne 0 -or $errorText -ne '' -or $text -cnotin @(($expected+"`n"),($expected+"`r`n"))) { throw 'SMOKE_DIAGNOSTIC_INVALID' }
+                  } else {
+                    if ($null -eq $exit -or $exit -eq 0 -or $text -ne '' -or $errorText.Trim() -cnotmatch ('^(?:Error: )?' + $case.error + '$')) { throw 'SMOKE_FAILURE_INVALID' }
+                  }
+                } finally {
+                  if (-not $process.HasExited) { $process.Kill(); [void]$process.WaitForExit(5000) }
+                  $process.Dispose()
+                }
+              }
+              foreach ($name in $sentinels.Keys) {
+                if ([IO.File]::ReadAllText((Join-Path $smokeHome $name)) -cne $sentinels[$name]) { throw 'SMOKE_SENTINEL_CHANGED' }
+              }
+              Write-Host 'cli_smoke_gate=ok cases=4 synthetic_sentinels=unchanged'
+            } finally {
+              foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name,$saved[$name],'Process') }
+            }
+          }
+          # End codexs smoke gate
           try {
             Set-Location -LiteralPath $state.workdir
             if ($state.scope -eq 'build' -and ($state.workspace_version -isnot [string] -or $state.workspace_version -cnotmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or $state.workspace_version -ceq '0.0.0')) { throw 'Missing or invalid expected source version' }
@@ -865,6 +940,7 @@ jobs:
               $versionLog | Out-File -LiteralPath $state.cargo_log -Encoding utf8 -Append
               if ($null -eq $versionExit -or $versionExit -ne 0 -or $versionLines.Count -ne 1 -or
                   $versionLines[0] -cnotmatch ('^codex(?:-cli)? ' + [regex]::Escape($state.workspace_version) + '$')) { throw 'Built CLI version validation failed' }
+              Invoke-CodexsSmokeGate $binary
             }
             exit $nativeExit
           } catch {

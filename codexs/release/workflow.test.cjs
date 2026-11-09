@@ -377,3 +377,68 @@ test('hosted updater checks reject a successful Node process that discovers zero
 test('hosted updater checks preserve a failing Node process despite a positive summary', () => {
   assert.notEqual(updaterCheck(1, 7).status, 0);
 });
+
+test('built CLI smoke gate rejects bad diagnostics and preserves isolated sentinels', async t => {
+  const runner = step('Run guarded native Cargo operation').body.match(/^\$runnerSource = @'\n(?<body>.*?)^'@/ms)?.groups.body;
+  const gate = runner?.match(/(?<body>^function Invoke-CodexsSmokeGate \{.*?)(?=^# End codexs smoke gate)/ms)?.groups.body;
+  assert.ok(gate, 'missing executable CLI smoke gate');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexs-workflow-test-'));
+  const ps = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+  const binary = path.join(directory, 'synthetic-cli.exe');
+  const run = (script, extra = {}) => spawnSync(ps, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { env: { ...process.env, RUNNER_TEMP: directory, CODEXS_TEST_BINARY: binary, ...extra }, windowsHide: true, encoding: 'utf8', timeout: 25000 });
+  try {
+    const compile = run(String.raw`$ErrorActionPreference='Stop'
+Add-Type -OutputType ConsoleApplication -OutputAssembly $env:CODEXS_TEST_BINARY -TypeDefinition @'
+using System;
+using System.IO;
+public class SmokeBoundaryProbe {
+  public static int Main(string[] args) {
+    string mode = Environment.GetEnvironmentVariable("CODEXS_TEST_SMOKE_MODE");
+    File.AppendAllText(Environment.GetEnvironmentVariable("CODEXS_TEST_ARGS"), string.Join("|", args) + "\n");
+    if (args.Length == 1) {
+      Console.Error.WriteLine("SMOKE_ARGS"); return mode == "missing-zero" ? 0 : 1;
+    }
+    if (Array.IndexOf(args, "--unknown") >= 0) {
+      Console.Error.WriteLine("SMOKE_ARGS"); return mode == "unknown-zero" ? 0 : 1;
+    }
+    string formatter = args[Array.IndexOf(args, "--formatter") + 1];
+    if (Path.GetFileName(formatter).StartsWith("wrong")) {
+      Console.Error.WriteLine(mode == "private-error" ? "private failure with path" : "SMOKE_OUTPUT");
+      return mode == "failure-zero" ? 0 : 1;
+    }
+    if (mode == "sentinel-write") File.WriteAllText(Path.Combine(Environment.GetEnvironmentVariable("CODEX_HOME"), "auth.json"), "changed");
+    string output = "{\"schema\":1,\"runner\":\"ok\",\"formatter\":\"ok\",\"cleanup\":\"ok\"}";
+    if (mode == "malformed") output = "{";
+    if (mode == "wrong-json") output = "{\"schema\":1,\"runner\":\"ok\",\"formatter\":\"ok\",\"cleanup\":\"failed\"}";
+    Console.WriteLine(output);
+    if (mode == "extra") Console.WriteLine(output);
+    return mode == "nonzero" ? 9 : 0;
+  }
+}
+'@`);
+    assert.equal(compile.status, 0, compile.stderr);
+    for (const mode of ['good', 'extra', 'malformed', 'wrong-json', 'nonzero', 'missing-zero', 'unknown-zero', 'failure-zero', 'private-error', 'sentinel-write']) {
+      await t.test(mode, () => {
+        const record = path.join(directory, `${mode}.args`);
+        const result = run("$ErrorActionPreference='Stop'\n" + gate + '\nInvoke-CodexsSmokeGate $env:CODEXS_TEST_BINARY',
+          { CODEXS_TEST_SMOKE_MODE: mode, CODEXS_TEST_ARGS: record });
+        if (mode === 'good') {
+          const diagnostic = fs.readdirSync(directory).filter(name => name.startsWith('codexs-smoke-gate-')).flatMap(name =>
+            fs.readdirSync(path.join(directory, name)).filter(file => /\.(out|err)$/.test(file)).map(file =>
+              [file, fs.readFileSync(path.join(directory, name, file), 'utf8')]));
+          assert.equal(result.status, 0, result.stderr + JSON.stringify(diagnostic));
+          const args = fs.readFileSync(record, 'utf8').trim().split('\n');
+          assert.equal(args.length, 4);
+          assert.ok(args[0].startsWith('codexs-smoke|--node|'));
+          assert.ok(args[0].includes('|--formatter|'));
+          assert.equal(args[1], 'codexs-smoke');
+          assert.ok(args[2].endsWith('|--unknown'));
+        } else assert.notEqual(result.status, 0, `gate accepted ${mode}`);
+      });
+    }
+  } finally {
+    if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('codexs-workflow-test-')) throw Error('Unsafe smoke test cleanup');
+    fs.rmSync(directory, { recursive: true });
+  }
+});
