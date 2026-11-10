@@ -16,7 +16,9 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const refFor = (release, bytes) => ({ release_id: release.release_id, sequence: release.sequence, manifest_sha256: digest(bytes) });
 const same = (a, b) => a && b && a.release_id === b.release_id && a.sequence === b.sequence && a.manifest_sha256 === b.manifest_sha256;
 const bounded = (error, fallback = 'STAGE_IO') => error instanceof UpdateError ? error : new UpdateError(fallback);
-const deterministic = error => /^(STAGE_(INVENTORY|PACKAGE|ARCHITECTURE|VERSION)|SMOKE_[A-Z0-9_]+|ARCHIVE_[A-Z0-9_]+|SIGNATURE|MANIFEST_(MISMATCH|SCHEMA))$/.test(error.code);
+// Only a wrong visible result identifies a bad formatter. Host I/O, cancellation, cleanup and
+// scheduling timeouts still block readiness but must not permanently blacklist a signed release.
+const deterministic = error => /^(STAGE_(INVENTORY|PACKAGE|ARCHITECTURE|VERSION)|SMOKE_OUTPUT|ARCHIVE_[A-Z0-9_]+|SIGNATURE|MANIFEST_(MISMATCH|SCHEMA))$/.test(error.code);
 
 function capability(ports) {
   // Only the OS-lock owner may provide this capability. There is no second lock or standalone writer.

@@ -1,342 +1,342 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 1cee1174c2e937758713df47683521233a36b4f7..b30500b71c169e4bd1805f57a59aa47944cc372d 100644
+index 1d27abbfa412b8efcbf495a32ce040225c44a186..a34786d549bb69c3435507ab46a560fd414df0d2 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -276,7 +276,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
+@@ -287,7 +287,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
  
  [[package]]
  name = "app_test_support"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -1895,7 +1895,7 @@ dependencies = [
+@@ -1888,7 +1888,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-core",
-@@ -1907,7 +1907,7 @@ dependencies = [
+@@ -1900,7 +1900,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-graph-store"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-protocol",
   "codex-state",
-@@ -1922,7 +1922,7 @@ dependencies = [
+@@ -1915,7 +1915,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-identity"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -1942,7 +1942,7 @@ dependencies = [
+@@ -1935,7 +1935,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-message-board-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -1965,7 +1965,7 @@ dependencies = [
+@@ -1958,7 +1958,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-message-board-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
-  "base64 0.22.1",
-  "caseless",
-@@ -1988,7 +1988,7 @@ dependencies = [
+  "codex-extension-api",
+  "codex-message-board",
+@@ -1972,7 +1972,7 @@ dependencies = [
  
  [[package]]
  name = "codex-agent-roles"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-config",
   "codex-file-system",
-@@ -2001,7 +2001,7 @@ dependencies = [
+@@ -1985,7 +1985,7 @@ dependencies = [
  
  [[package]]
  name = "codex-analytics"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-app-server-protocol",
   "codex-git-utils",
-@@ -2024,7 +2024,7 @@ dependencies = [
+@@ -2008,7 +2008,7 @@ dependencies = [
  
  [[package]]
  name = "codex-ansi-escape"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "ansi-to-tui",
   "pretty_assertions",
-@@ -2035,7 +2035,7 @@ dependencies = [
+@@ -2019,7 +2019,7 @@ dependencies = [
  
  [[package]]
  name = "codex-api"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "assert_matches",
-@@ -2073,7 +2073,7 @@ dependencies = [
+@@ -2057,7 +2057,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "app_test_support",
-@@ -2187,7 +2187,7 @@ dependencies = [
+@@ -2174,7 +2174,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-app-server",
   "codex-app-server-protocol",
-@@ -2214,7 +2214,7 @@ dependencies = [
+@@ -2202,7 +2202,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-daemon"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "blake3",
-@@ -2240,7 +2240,7 @@ dependencies = [
+@@ -2232,7 +2232,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-protocol"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-app-server-protocol-noop-macros",
-@@ -2274,11 +2274,11 @@ dependencies = [
+@@ -2266,11 +2266,11 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-protocol-noop-macros"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  
  [[package]]
  name = "codex-app-server-test-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "clap",
-@@ -2300,7 +2300,7 @@ dependencies = [
+@@ -2292,7 +2292,7 @@ dependencies = [
  
  [[package]]
  name = "codex-app-server-transport"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "axum",
   "base64 0.22.1",
-@@ -2342,7 +2342,7 @@ dependencies = [
+@@ -2335,7 +2335,7 @@ dependencies = [
  
  [[package]]
  name = "codex-apply-patch"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "assert_cmd",
-@@ -2362,7 +2362,7 @@ dependencies = [
+@@ -2355,7 +2355,7 @@ dependencies = [
  
  [[package]]
  name = "codex-arg0"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-apply-patch",
-@@ -2386,7 +2386,7 @@ dependencies = [
+@@ -2378,7 +2378,7 @@ dependencies = [
  
  [[package]]
  name = "codex-async-utils"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "pretty_assertions",
   "rand 0.9.3",
-@@ -2396,7 +2396,7 @@ dependencies = [
+@@ -2388,7 +2388,7 @@ dependencies = [
  
  [[package]]
  name = "codex-attachment-store"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "pretty_assertions",
   "serde",
-@@ -2406,7 +2406,7 @@ dependencies = [
+@@ -2398,7 +2398,7 @@ dependencies = [
  
  [[package]]
  name = "codex-aws-auth"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "aws-config",
   "aws-credential-types",
-@@ -2432,7 +2432,7 @@ dependencies = [
+@@ -2424,7 +2424,7 @@ dependencies = [
  
  [[package]]
  name = "codex-backend-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-api",
-@@ -2452,7 +2452,7 @@ dependencies = [
+@@ -2444,7 +2444,7 @@ dependencies = [
  
  [[package]]
  name = "codex-backend-openapi-models"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "serde",
   "serde_json",
-@@ -2461,7 +2461,7 @@ dependencies = [
+@@ -2453,7 +2453,7 @@ dependencies = [
  
  [[package]]
  name = "codex-build-info"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-install-context",
   "pretty_assertions",
-@@ -2474,7 +2474,7 @@ dependencies = [
+@@ -2466,7 +2466,7 @@ dependencies = [
  
  [[package]]
  name = "codex-bwrap"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "cc",
   "libc",
-@@ -2483,7 +2483,7 @@ dependencies = [
+@@ -2475,7 +2475,7 @@ dependencies = [
  
  [[package]]
  name = "codex-chatgpt"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "clap",
-@@ -2505,7 +2505,7 @@ dependencies = [
+@@ -2497,7 +2497,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cli"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "app_test_support",
-@@ -2607,7 +2607,7 @@ dependencies = [
+@@ -2601,7 +2601,7 @@ dependencies = [
  
  [[package]]
  name = "codex-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-http-client",
   "eventsource-stream",
-@@ -2621,7 +2621,7 @@ dependencies = [
+@@ -2615,7 +2615,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cloud-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "async-stream",
-@@ -2645,7 +2645,7 @@ dependencies = [
+@@ -2639,7 +2639,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cloud-config"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
   "chrono",
-@@ -2671,7 +2671,7 @@ dependencies = [
+@@ -2667,7 +2667,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cloud-tasks"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -2704,7 +2704,7 @@ dependencies = [
+@@ -2700,7 +2700,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cloud-tasks-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -2719,7 +2719,7 @@ dependencies = [
+@@ -2715,7 +2715,7 @@ dependencies = [
  
  [[package]]
  name = "codex-cloud-tasks-mock-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "chrono",
   "codex-cloud-tasks-client",
-@@ -2728,7 +2728,7 @@ dependencies = [
+@@ -2724,7 +2724,7 @@ dependencies = [
  
  [[package]]
  name = "codex-code-mode"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-code-mode-protocol",
   "codex-http-client",
-@@ -2751,7 +2751,7 @@ dependencies = [
+@@ -2748,7 +2748,7 @@ dependencies = [
  
  [[package]]
  name = "codex-code-mode-host"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "axum",
-@@ -2780,7 +2780,7 @@ dependencies = [
+@@ -2779,7 +2779,7 @@ dependencies = [
  
  [[package]]
  name = "codex-code-mode-protocol"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-protocol",
   "glob",
-@@ -2798,7 +2798,7 @@ dependencies = [
+@@ -2797,7 +2797,7 @@ dependencies = [
  
  [[package]]
  name = "codex-code-mode-runtime"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
   "codex-code-mode-protocol",
@@ -345,777 +345,839 @@ index 1cee1174c2e937758713df47683521233a36b4f7..b30500b71c169e4bd1805f57a59aa479
  [[package]]
  name = "codex-collaboration-mode-templates"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  
  [[package]]
  name = "codex-config"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -2870,7 +2870,7 @@ dependencies = [
+@@ -2874,7 +2874,7 @@ dependencies = [
  
  [[package]]
  name = "codex-config-schema"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "clap",
-@@ -2879,7 +2879,7 @@ dependencies = [
+@@ -2883,7 +2883,7 @@ dependencies = [
  
  [[package]]
  name = "codex-connectors"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "arc-swap",
-@@ -2901,7 +2901,7 @@ dependencies = [
+@@ -2905,7 +2905,7 @@ dependencies = [
  
  [[package]]
  name = "codex-connectors-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-connectors",
   "codex-core-plugins",
-@@ -2915,7 +2915,7 @@ dependencies = [
+@@ -2919,7 +2919,7 @@ dependencies = [
  
  [[package]]
  name = "codex-context-fragments"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-protocol",
-  "codex-utils-string",
-@@ -2925,7 +2925,7 @@ dependencies = [
+  "codex-protocol-test-support",
+@@ -2930,7 +2930,7 @@ dependencies = [
  
  [[package]]
  name = "codex-core"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "arc-swap",
-@@ -3067,7 +3067,7 @@ dependencies = [
+@@ -3080,7 +3080,7 @@ dependencies = [
  
  [[package]]
  name = "codex-core-api"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-analytics",
   "codex-app-server-protocol",
-@@ -3090,7 +3090,7 @@ dependencies = [
+@@ -3103,7 +3103,7 @@ dependencies = [
  
  [[package]]
  name = "codex-core-plugin-common"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-utils-absolute-path",
   "semver",
-@@ -3101,7 +3101,7 @@ dependencies = [
+@@ -3114,7 +3114,7 @@ dependencies = [
  
  [[package]]
  name = "codex-core-plugins"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -3158,7 +3158,7 @@ dependencies = [
+@@ -3171,7 +3171,7 @@ dependencies = [
  
  [[package]]
  name = "codex-diagnostics"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "libc",
   "pretty_assertions",
-@@ -3166,7 +3166,7 @@ dependencies = [
+@@ -3179,7 +3179,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-direct-tool-timing"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "codex-utils-critical-path",
+  "pretty_assertions",
+@@ -3190,7 +3190,7 @@ dependencies = [
  
  [[package]]
  name = "codex-exec"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "assert_cmd",
-@@ -3218,7 +3218,7 @@ dependencies = [
+@@ -3243,7 +3243,7 @@ dependencies = [
  
  [[package]]
  name = "codex-exec-server"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "arc-swap",
-@@ -3287,7 +3287,7 @@ dependencies = [
+@@ -3316,7 +3316,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-exec-server-cli"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "anyhow",
+  "assert_matches",
+@@ -3356,7 +3356,7 @@ dependencies = [
  
  [[package]]
  name = "codex-exec-server-protocol"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
   "codex-file-system",
-@@ -3304,7 +3304,7 @@ dependencies = [
+@@ -3374,7 +3374,7 @@ dependencies = [
  
  [[package]]
  name = "codex-exec-server-test-support"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-exec-server",
-@@ -3319,7 +3319,7 @@ dependencies = [
+@@ -3389,7 +3389,7 @@ dependencies = [
  
  [[package]]
  name = "codex-execpolicy"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "clap",
-@@ -3337,7 +3337,7 @@ dependencies = [
+@@ -3407,7 +3407,7 @@ dependencies = [
  
  [[package]]
  name = "codex-experimental-api-macros"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "proc-macro2",
   "quote",
-@@ -3346,7 +3346,7 @@ dependencies = [
+@@ -3416,7 +3416,7 @@ dependencies = [
  
  [[package]]
  name = "codex-extension-api"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-api",
   "codex-config",
-@@ -3368,7 +3368,7 @@ dependencies = [
+@@ -3439,7 +3439,7 @@ dependencies = [
  
  [[package]]
  name = "codex-extension-items"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-utils-absolute-path",
   "pretty_assertions",
-@@ -3380,7 +3380,7 @@ dependencies = [
+@@ -3451,7 +3451,7 @@ dependencies = [
  
  [[package]]
  name = "codex-external-agent-migration"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "chrono",
   "codex-analytics",
-@@ -3410,7 +3410,7 @@ dependencies = [
+@@ -3482,7 +3482,7 @@ dependencies = [
  
  [[package]]
  name = "codex-features"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-network-proxy",
   "codex-protocol",
-@@ -3424,7 +3424,7 @@ dependencies = [
+@@ -3496,7 +3496,7 @@ dependencies = [
  
  [[package]]
  name = "codex-feedback"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "bytes",
-@@ -3451,7 +3451,7 @@ dependencies = [
+@@ -3524,7 +3524,7 @@ dependencies = [
  
  [[package]]
  name = "codex-file-search"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "clap",
-@@ -3467,7 +3467,7 @@ dependencies = [
+@@ -3540,7 +3540,7 @@ dependencies = [
  
  [[package]]
  name = "codex-file-system"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "bytes",
   "codex-protocol",
-@@ -3479,7 +3479,7 @@ dependencies = [
+@@ -3554,7 +3554,7 @@ dependencies = [
  
  [[package]]
  name = "codex-file-watcher"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "notify",
   "pretty_assertions",
-@@ -3490,7 +3490,7 @@ dependencies = [
+@@ -3565,7 +3565,7 @@ dependencies = [
  
  [[package]]
  name = "codex-git-attribution"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-backend-client",
   "codex-extension-api",
-@@ -3503,7 +3503,7 @@ dependencies = [
+@@ -3578,7 +3578,7 @@ dependencies = [
  
  [[package]]
  name = "codex-git-utils"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -3531,7 +3531,7 @@ dependencies = [
+@@ -3606,7 +3606,7 @@ dependencies = [
  
  [[package]]
  name = "codex-goal-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -3556,7 +3556,7 @@ dependencies = [
+@@ -3631,7 +3631,7 @@ dependencies = [
  
  [[package]]
  name = "codex-guardian-context"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-context-fragments",
   "codex-history",
-@@ -3568,7 +3568,7 @@ dependencies = [
+@@ -3645,7 +3645,7 @@ dependencies = [
  
  [[package]]
  name = "codex-guardian-reviewer"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-analytics",
-@@ -3593,7 +3593,7 @@ dependencies = [
+@@ -3681,7 +3681,7 @@ dependencies = [
  
  [[package]]
  name = "codex-guardian-v2"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-analytics",
-@@ -3630,7 +3630,7 @@ dependencies = [
+@@ -3720,7 +3720,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-guardian-v3"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "codex-message-board",
+  "codex-protocol",
+@@ -3729,7 +3729,7 @@ dependencies = [
  
  [[package]]
  name = "codex-history"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-protocol",
-@@ -3642,7 +3642,7 @@ dependencies = [
+@@ -3741,7 +3741,7 @@ dependencies = [
  
  [[package]]
  name = "codex-history-notes-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-analytics",
   "codex-client",
-@@ -3667,7 +3667,7 @@ dependencies = [
+@@ -3767,7 +3767,7 @@ dependencies = [
  
  [[package]]
  name = "codex-home"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-extension-api",
   "codex-utils-absolute-path",
-@@ -3679,7 +3679,7 @@ dependencies = [
+@@ -3779,7 +3779,7 @@ dependencies = [
  
  [[package]]
  name = "codex-hooks"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "async-channel",
-@@ -3707,7 +3707,7 @@ dependencies = [
+@@ -3808,7 +3808,7 @@ dependencies = [
  
  [[package]]
  name = "codex-http-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "bytes",
   "codex-utils-cargo-bin",
-@@ -3743,7 +3743,7 @@ dependencies = [
+@@ -3848,7 +3848,7 @@ dependencies = [
  
  [[package]]
  name = "codex-image-generation-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
   "codex-api",
-@@ -3771,7 +3771,7 @@ dependencies = [
+@@ -3880,7 +3880,7 @@ dependencies = [
  
  [[package]]
  name = "codex-install-context"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-utils-absolute-path",
   "codex-utils-home-dir",
-@@ -3784,7 +3784,7 @@ dependencies = [
+@@ -3893,7 +3893,7 @@ dependencies = [
  
  [[package]]
  name = "codex-keyring-store"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "keyring",
   "pretty_assertions",
-@@ -3795,7 +3795,7 @@ dependencies = [
+@@ -3904,7 +3904,7 @@ dependencies = [
  
  [[package]]
  name = "codex-linux-sandbox"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "clap",
   "codex-core",
-@@ -3824,7 +3824,7 @@ dependencies = [
+@@ -3933,7 +3933,7 @@ dependencies = [
  
  [[package]]
  name = "codex-lmstudio"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-core",
   "codex-http-client",
-@@ -3838,7 +3838,7 @@ dependencies = [
+@@ -3947,7 +3947,7 @@ dependencies = [
  
  [[package]]
  name = "codex-login"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -3884,7 +3884,7 @@ dependencies = [
+@@ -3993,7 +3993,7 @@ dependencies = [
  
  [[package]]
  name = "codex-mcp"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "arc-swap",
-@@ -3924,7 +3924,7 @@ dependencies = [
+@@ -4037,7 +4037,7 @@ dependencies = [
  
  [[package]]
  name = "codex-mcp-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "axum",
-@@ -3957,7 +3957,7 @@ dependencies = [
+@@ -4070,7 +4070,7 @@ dependencies = [
  
  [[package]]
  name = "codex-memories-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-core",
   "codex-extension-api",
-@@ -3979,7 +3979,7 @@ dependencies = [
+@@ -4092,7 +4092,7 @@ dependencies = [
  
  [[package]]
  name = "codex-memories-read"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-protocol",
   "codex-shell-command",
-@@ -3989,7 +3989,7 @@ dependencies = [
+@@ -4102,7 +4102,7 @@ dependencies = [
  
  [[package]]
  name = "codex-memories-write"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -4026,7 +4026,7 @@ dependencies = [
+@@ -4139,7 +4139,7 @@ dependencies = [
  
  [[package]]
  name = "codex-mermaid"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "insta",
   "pretty_assertions",
-@@ -4035,7 +4035,7 @@ dependencies = [
+@@ -4148,7 +4148,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-message-board"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "base64 0.22.1",
+  "caseless",
+@@ -4171,7 +4171,7 @@ dependencies = [
  
  [[package]]
  name = "codex-message-history"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-config",
   "memchr",
-@@ -4049,7 +4049,7 @@ dependencies = [
+@@ -4185,7 +4185,7 @@ dependencies = [
  
  [[package]]
  name = "codex-model-provider"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
   "chrono",
-@@ -4083,7 +4083,7 @@ dependencies = [
+@@ -4224,7 +4224,7 @@ dependencies = [
  
  [[package]]
  name = "codex-model-provider-info"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-client",
-  "codex-protocol",
-@@ -4101,7 +4101,7 @@ dependencies = [
+  "codex-http-client",
+@@ -4242,7 +4242,7 @@ dependencies = [
  
  [[package]]
  name = "codex-models-manager"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "chrono",
   "codex-http-client",
-@@ -4120,7 +4120,7 @@ dependencies = [
+@@ -4261,7 +4261,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-multi-env-copy-file"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "anyhow",
+  "codex-config",
+@@ -4287,7 +4287,7 @@ dependencies = [
  
  [[package]]
  name = "codex-mxc-sandbox"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
-  "appcontainer_common",
-@@ -4142,7 +4142,7 @@ dependencies = [
+  "codex-network-proxy",
+@@ -4308,7 +4308,7 @@ dependencies = [
  
  [[package]]
  name = "codex-network-proxy"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
-  "base64 0.22.1",
-@@ -4191,7 +4191,7 @@ dependencies = [
+  "aws-credential-types",
+@@ -4359,7 +4359,7 @@ dependencies = [
  
  [[package]]
  name = "codex-ollama"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "assert_matches",
   "async-stream",
-@@ -4211,7 +4211,7 @@ dependencies = [
+@@ -4379,7 +4379,7 @@ dependencies = [
  
  [[package]]
  name = "codex-otel"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "bytes",
   "chrono",
-@@ -4248,7 +4248,7 @@ dependencies = [
+@@ -4418,7 +4418,7 @@ dependencies = [
  
  [[package]]
  name = "codex-otel-trace-websocket"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "axum",
-@@ -4259,7 +4259,7 @@ dependencies = [
+@@ -4429,7 +4429,7 @@ dependencies = [
  
  [[package]]
  name = "codex-plugin"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-config",
   "codex-core-plugin-common",
-@@ -4274,7 +4274,7 @@ dependencies = [
+@@ -4444,7 +4444,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-plugin-host"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "codex-utils-cargo-bin",
+  "codex-utils-process",
+@@ -4461,7 +4461,7 @@ dependencies = [
  
  [[package]]
  name = "codex-process-hardening"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "libc",
   "pretty_assertions",
-@@ -4282,7 +4282,7 @@ dependencies = [
+@@ -4469,7 +4469,7 @@ dependencies = [
  
  [[package]]
  name = "codex-prompts"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-collaboration-mode-templates",
-@@ -4299,7 +4299,7 @@ dependencies = [
+@@ -4487,7 +4487,7 @@ dependencies = [
  
  [[package]]
  name = "codex-protocol"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chardetng",
-@@ -4344,7 +4344,7 @@ dependencies = [
+@@ -4533,14 +4533,14 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-protocol-test-support"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "codex-protocol",
+ ]
  
  [[package]]
  name = "codex-queue-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-core",
-@@ -4365,7 +4365,7 @@ dependencies = [
+@@ -4561,7 +4561,7 @@ dependencies = [
  
  [[package]]
  name = "codex-realtime-webrtc"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-build-info",
-@@ -4384,7 +4384,7 @@ dependencies = [
+@@ -4580,7 +4580,7 @@ dependencies = [
  
  [[package]]
  name = "codex-response-debug-context"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
   "codex-api",
-@@ -4395,7 +4395,7 @@ dependencies = [
+@@ -4591,7 +4591,7 @@ dependencies = [
  
  [[package]]
  name = "codex-responses-api-proxy"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
-  "clap",
-@@ -4412,7 +4412,7 @@ dependencies = [
+  "bytes",
+@@ -4615,7 +4615,7 @@ dependencies = [
  
  [[package]]
  name = "codex-rmcp-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "axum",
-@@ -4463,7 +4463,7 @@ dependencies = [
+@@ -4666,7 +4666,7 @@ dependencies = [
  
  [[package]]
  name = "codex-rollout"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -4494,7 +4494,7 @@ dependencies = [
+@@ -4699,7 +4699,7 @@ dependencies = [
  
  [[package]]
  name = "codex-rollout-trace"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-code-mode",
-@@ -4510,7 +4510,7 @@ dependencies = [
+@@ -4716,7 +4716,7 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-runtime-agent-instance"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "base64 0.22.1",
+  "codex-agent-identity",
+@@ -4742,7 +4742,7 @@ dependencies = [
  
  [[package]]
  name = "codex-sandboxing"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-mxc-sandbox",
-@@ -4538,7 +4538,7 @@ dependencies = [
+@@ -4770,7 +4770,7 @@ dependencies = [
  
  [[package]]
  name = "codex-secrets"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "age",
   "anyhow",
-@@ -4559,7 +4559,7 @@ dependencies = [
+@@ -4791,7 +4791,7 @@ dependencies = [
  
  [[package]]
  name = "codex-shell-command"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -4582,7 +4582,7 @@ dependencies = [
- 
- [[package]]
- name = "codex-shell-escalation"
--version = "0.0.0"
-+version = "0.162.1"
- dependencies = [
-  "anyhow",
-  "clap",
-@@ -4602,7 +4602,7 @@ dependencies = [
+@@ -4814,7 +4814,7 @@ dependencies = [
  
  [[package]]
  name = "codex-skills"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-protocol",
   "codex-shell-command",
-@@ -4619,7 +4619,7 @@ dependencies = [
+@@ -4831,7 +4831,7 @@ dependencies = [
  
  [[package]]
  name = "codex-skills-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "assert_matches",
   "blake3",
-@@ -4657,7 +4657,7 @@ dependencies = [
+@@ -4871,7 +4871,7 @@ dependencies = [
  
  [[package]]
  name = "codex-state"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "chrono",
-@@ -4684,7 +4684,7 @@ dependencies = [
+@@ -4900,7 +4900,7 @@ dependencies = [
  
  [[package]]
  name = "codex-stdio-to-uds"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-uds",
-@@ -4696,7 +4696,7 @@ dependencies = [
+@@ -4912,7 +4912,7 @@ dependencies = [
  
  [[package]]
  name = "codex-tcp-tunnel"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "bytes",
-@@ -4717,7 +4717,7 @@ dependencies = [
+@@ -4933,7 +4933,7 @@ dependencies = [
  
  [[package]]
  name = "codex-terminal-detection"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "pretty_assertions",
   "tracing",
-@@ -4725,7 +4725,7 @@ dependencies = [
+@@ -4941,7 +4941,7 @@ dependencies = [
  
  [[package]]
  name = "codex-test-binary-support"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-arg0",
   "tempfile",
-@@ -4733,7 +4733,7 @@ dependencies = [
+@@ -4949,7 +4949,7 @@ dependencies = [
  
  [[package]]
  name = "codex-thread-manager-sample"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "clap",
-@@ -4744,7 +4744,7 @@ dependencies = [
+@@ -4960,7 +4960,7 @@ dependencies = [
  
  [[package]]
  name = "codex-thread-store"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "chrono",
   "codex-app-server-protocol",
-@@ -4775,7 +4775,7 @@ dependencies = [
+@@ -4991,7 +4991,7 @@ dependencies = [
  
  [[package]]
  name = "codex-tools"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "bitflags 2.13.1",
-  "codex-code-mode",
-@@ -4801,7 +4801,7 @@ dependencies = [
+  "codex-attachment-store",
+@@ -5017,7 +5017,7 @@ dependencies = [
  
  [[package]]
  name = "codex-tui"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "app_test_support",
-@@ -4927,7 +4927,7 @@ dependencies = [
+@@ -5145,7 +5145,7 @@ dependencies = [
  
  [[package]]
  name = "codex-uds"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "async-io",
   "libc",
-@@ -4941,7 +4941,7 @@ dependencies = [
+@@ -5159,7 +5159,7 @@ dependencies = [
  
  [[package]]
  name = "codex-user-verification"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
-  "core-foundation 0.10.1",
-@@ -4961,7 +4961,7 @@ dependencies = [
+  "block2",
+@@ -5180,7 +5180,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-absolute-path"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "dirs",
   "dunce",
-@@ -4975,14 +4975,14 @@ dependencies = [
+@@ -5194,14 +5194,14 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-approval-presets"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-protocol",
  ]
@@ -1123,170 +1185,186 @@ index 1cee1174c2e937758713df47683521233a36b4f7..b30500b71c169e4bd1805f57a59aa479
  [[package]]
  name = "codex-utils-audio"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
   "codex-protocol",
-@@ -4996,7 +4996,7 @@ dependencies = [
+@@ -5215,7 +5215,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-cache"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "lru",
   "sha1 0.10.6",
-@@ -5005,7 +5005,7 @@ dependencies = [
+@@ -5224,7 +5224,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-cargo-bin"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "assert_cmd",
   "runfiles",
-@@ -5014,7 +5014,7 @@ dependencies = [
+@@ -5233,7 +5233,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-cli"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "clap",
   "codex-protocol",
-@@ -5026,15 +5026,15 @@ dependencies = [
+@@ -5245,22 +5245,22 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-utils-critical-path"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "pretty_assertions",
+ ]
  
  [[package]]
  name = "codex-utils-elapsed"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  
  [[package]]
  name = "codex-utils-fuzzy-match"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  
  [[package]]
  name = "codex-utils-git-discovery"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-git-utils",
   "codex-utils-absolute-path",
-@@ -5047,7 +5047,7 @@ dependencies = [
+@@ -5273,14 +5273,14 @@ dependencies = [
+ 
+ [[package]]
+ name = "codex-utils-head-tail-buffer"
+-version = "0.0.0"
++version = "0.166.0"
+ dependencies = [
+  "pretty_assertions",
+ ]
  
  [[package]]
  name = "codex-utils-home-dir"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-utils-absolute-path",
   "dirs",
-@@ -5057,7 +5057,7 @@ dependencies = [
+@@ -5290,7 +5290,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-image"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
   "codex-utils-cache",
-@@ -5071,7 +5071,7 @@ dependencies = [
+@@ -5304,7 +5304,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-json-to-toml"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "pretty_assertions",
   "serde_json",
-@@ -5080,7 +5080,7 @@ dependencies = [
+@@ -5313,7 +5313,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-oss"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-core",
   "codex-lmstudio",
-@@ -5090,7 +5090,7 @@ dependencies = [
+@@ -5323,7 +5323,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-output-truncation"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-protocol",
   "codex-utils-string",
-@@ -5100,7 +5100,7 @@ dependencies = [
+@@ -5333,7 +5333,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-path"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-utils-absolute-path",
   "dunce",
-@@ -5111,7 +5111,7 @@ dependencies = [
+@@ -5344,7 +5344,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-path-uri"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "base64 0.22.1",
   "codex-utils-absolute-path",
-@@ -5127,7 +5127,7 @@ dependencies = [
+@@ -5360,7 +5360,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-plugins"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-exec-server",
   "codex-exec-server-protocol",
-@@ -5141,7 +5141,7 @@ dependencies = [
+@@ -5374,7 +5374,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-process"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "pretty_assertions",
   "tokio",
-@@ -5149,7 +5149,7 @@ dependencies = [
+@@ -5382,7 +5382,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-pty"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-utils-cargo-bin",
-@@ -5168,7 +5168,7 @@ dependencies = [
+@@ -5401,7 +5401,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-readiness"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "assert_matches",
   "thiserror 2.0.18",
-@@ -5178,7 +5178,7 @@ dependencies = [
+@@ -5411,7 +5411,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-redacted-string"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "schemars 0.8.22",
   "serde",
-@@ -5186,14 +5186,14 @@ dependencies = [
+@@ -5419,14 +5419,14 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-rustls-provider"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "rustls",
  ]
@@ -1294,25 +1372,25 @@ index 1cee1174c2e937758713df47683521233a36b4f7..b30500b71c169e4bd1805f57a59aa479
  [[package]]
  name = "codex-utils-sandbox-summary"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-protocol",
   "codex-utils-absolute-path",
-@@ -5203,7 +5203,7 @@ dependencies = [
+@@ -5436,7 +5436,7 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-sleep-inhibitor"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "core-foundation 0.9.4",
   "libc",
-@@ -5213,14 +5213,14 @@ dependencies = [
+@@ -5446,14 +5446,14 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-stream-parser"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "pretty_assertions",
  ]
@@ -1320,16 +1398,16 @@ index 1cee1174c2e937758713df47683521233a36b4f7..b30500b71c169e4bd1805f57a59aa479
  [[package]]
  name = "codex-utils-string"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "pretty_assertions",
   "regex-lite",
-@@ -5230,14 +5230,14 @@ dependencies = [
+@@ -5463,14 +5463,14 @@ dependencies = [
  
  [[package]]
  name = "codex-utils-template"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "pretty_assertions",
  ]
@@ -1337,70 +1415,70 @@ index 1cee1174c2e937758713df47683521233a36b4f7..b30500b71c169e4bd1805f57a59aa479
  [[package]]
  name = "codex-v8-poc"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "pretty_assertions",
   "v8",
-@@ -5245,7 +5245,7 @@ dependencies = [
+@@ -5478,7 +5478,7 @@ dependencies = [
  
  [[package]]
  name = "codex-voice-host"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-install-context",
-@@ -5272,7 +5272,7 @@ dependencies = [
+@@ -5505,7 +5505,7 @@ dependencies = [
  
  [[package]]
  name = "codex-web-search-extension"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-api",
   "codex-core",
-@@ -5294,7 +5294,7 @@ dependencies = [
+@@ -5527,7 +5527,7 @@ dependencies = [
  
  [[package]]
  name = "codex-websocket-auth"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -5313,7 +5313,7 @@ dependencies = [
+@@ -5546,7 +5546,7 @@ dependencies = [
  
  [[package]]
  name = "codex-websocket-client"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-http-client",
   "codex-utils-rustls-provider",
-@@ -5329,7 +5329,7 @@ dependencies = [
+@@ -5562,7 +5562,7 @@ dependencies = [
  
  [[package]]
  name = "codex-windows-sandbox"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "base64 0.22.1",
-@@ -5359,7 +5359,7 @@ dependencies = [
+@@ -5592,7 +5592,7 @@ dependencies = [
  
  [[package]]
  name = "codex-windows-sandbox-service"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-cloud-config",
-@@ -5376,14 +5376,14 @@ dependencies = [
+@@ -5610,14 +5610,14 @@ dependencies = [
  
  [[package]]
  name = "codex-windows-sandbox-test-support"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "dirs",
  ]
@@ -1408,28 +1486,84 @@ index 1cee1174c2e937758713df47683521233a36b4f7..b30500b71c169e4bd1805f57a59aa479
  [[package]]
  name = "codex-workload-identity"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "codex-http-client",
   "pretty_assertions",
-@@ -5398,7 +5398,7 @@ dependencies = [
+@@ -5632,7 +5632,7 @@ dependencies = [
  
  [[package]]
  name = "codex-worktree"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "codex-git-utils",
-@@ -5639,7 +5639,7 @@ dependencies = [
+@@ -5885,7 +5885,7 @@ dependencies = [
  
  [[package]]
  name = "core_test_support"
 -version = "0.0.0"
-+version = "0.162.1"
++version = "0.166.0"
  dependencies = [
   "anyhow",
   "assert_cmd",
+diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
+index 8a578c38a7d3d6dae042b4ef623b7ba96122d6f0..c675ca7af685d46f07889c346256aef1c0ef3fa3 100644
+--- a/codex-rs/cli/src/main.rs
++++ b/codex-rs/cli/src/main.rs
+@@ -1037,6 +1037,15 @@ fn stage_str(stage: Stage) -> &'static str {
+ }
+ 
+ fn main() -> anyhow::Result<()> {
++    let mut smoke_args = std::env::args_os();
++    let argv0 = PathBuf::from(smoke_args.next().unwrap_or_default());
++    let helper_alias = matches!(
++        argv0.file_stem().and_then(|name| name.to_str()),
++        Some("apply_patch" | "applypatch" | "codex-linux-sandbox")
++    );
++    if !helper_alias && smoke_args.next().as_deref() == Some(std::ffi::OsStr::new("codexs-smoke")) {
++        return codexs_smoke_main(smoke_args.collect());
++    }
+     codex_build_info::initialize!();
+     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
+     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
+@@ -1046,6 +1055,35 @@ fn main() -> anyhow::Result<()> {
+     })
+ }
+ 
++fn codexs_smoke_main(args: Vec<std::ffi::OsString>) -> anyhow::Result<()> {
++    let mut node = None;
++    let mut formatter = None;
++    let mut args = args.into_iter();
++    while let Some(flag) = args.next() {
++        let value = args.next().map(PathBuf::from);
++        match flag.to_str() {
++            Some("--node") if node.is_none() => node = value,
++            Some("--formatter") if formatter.is_none() => formatter = value,
++            _ => anyhow::bail!("SMOKE_ARGS"),
++        }
++    }
++    let (Some(node), Some(formatter)) = (node, formatter) else {
++        anyhow::bail!("SMOKE_ARGS");
++    };
++    if !node.is_absolute() || !formatter.is_absolute() || !node.is_file() || !formatter.is_file() {
++        anyhow::bail!("SMOKE_ARGS");
++    }
++    let runtime = tokio::runtime::Builder::new_current_thread()
++        .enable_all()
++        .build()
++        .map_err(|_| anyhow::anyhow!("SMOKE_RUNTIME"))?;
++    runtime
++        .block_on(codex_tui::run_codexs_smoke(node, formatter))
++        .map_err(|error| anyhow::anyhow!("{error}"))?;
++    println!("{{\"schema\":1,\"runner\":\"ok\",\"formatter\":\"ok\",\"cleanup\":\"ok\"}}");
++    Ok(())
++}
++
+ async fn cli_main(
+     arg0_paths: Arg0DispatchPaths,
+     remote_control_disabled: bool,
 diff --git a/codex-rs/config/src/project_trust.rs b/codex-rs/config/src/project_trust.rs
 index 82678afa53d15deb19a49b0460df5529a1b23bdb..c278fbf2415dbd6a7b26d032c36bab48868f7618 100644
 --- a/codex-rs/config/src/project_trust.rs
@@ -1504,7 +1638,7 @@ index f935b0e6dd4d4098b20fdf3a76ec54ba17a1216f..156934a52f85d15112d792f8a1287ca4
 +    assert_eq!(config.get_active_project(&cwd, None), None);
 +}
 diff --git a/codex-rs/tui/Cargo.toml b/codex-rs/tui/Cargo.toml
-index 45f5866515da794194bc0328c7a525a602aa48d7..28df1c5307aae001f92ece7df6f1e32c03a73af6 100644
+index 47968b86946d94be3b72d3dc2f817ec18cf82f55..3626d270c29c08f773cba9582decb6222c8def3d 100644
 --- a/codex-rs/tui/Cargo.toml
 +++ b/codex-rs/tui/Cargo.toml
 @@ -116,6 +116,7 @@ tokio = { workspace = true, features = [
@@ -1524,18 +1658,18 @@ index 45f5866515da794194bc0328c7a525a602aa48d7..28df1c5307aae001f92ece7df6f1e32c
      "Win32_System_Threading",
      "Win32_UI_WindowsAndMessaging",
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 5dfc3ad7b2cd6bee546988be91bd9b5710d70fa2..c7e96afe52ee36260a5954798d1694cdebc40c58 100644
+index fbc109028f90d89d03a0467e11f6fafa9fc27c77..b89db51701ff37c9519eac8914ae89a456147fa1 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
-@@ -527,6 +527,7 @@ struct InitialHistoryReplayBuffer {
+@@ -537,6 +537,7 @@ struct InitialHistoryReplayBuffer {
  }
  
  pub(crate) struct App {
 +    client_version: &'static str,
      feature_write_lock: Arc<tokio::sync::Mutex<()>>,
-     model_catalog: Arc<ModelCatalog>,
-     pub(crate) session_telemetry: SessionTelemetry,
-@@ -820,6 +821,7 @@ impl App {
+     config_notification_test_generation: u64,
+     config_notification_test_pending: Option<u64>,
+@@ -837,6 +838,7 @@ impl App {
          initial_user_message: Option<crate::chatwidget::UserMessage>,
      ) -> crate::chatwidget::ChatWidgetInit {
          crate::chatwidget::ChatWidgetInit {
@@ -1544,23 +1678,23 @@ index 5dfc3ad7b2cd6bee546988be91bd9b5710d70fa2..c7e96afe52ee36260a5954798d1694cd
              config: cfg,
              frame_requester: tui.frame_requester(),
 diff --git a/codex-rs/tui/src/app/config_persistence.rs b/codex-rs/tui/src/app/config_persistence.rs
-index 5e8bf63ef3d9c1aef4f2b08acc0c98860ec6022b..7c792f8992ec9bdcf6e821a60c6cd8c0653eb511 100644
+index 8a04d724522490941798f369222e3ef7980605a5..f327a7173b9937986ccf8a567e3a8b7b83a57d3e 100644
 --- a/codex-rs/tui/src/app/config_persistence.rs
 +++ b/codex-rs/tui/src/app/config_persistence.rs
-@@ -473,6 +473,8 @@ impl App {
+@@ -484,6 +484,8 @@ impl App {
              .await?;
          self.apply_runtime_policy_overrides(&mut config, RuntimePolicyOverrideScope::All)?;
          self.local_settings = self.local_settings.reloaded(&config);
 +        self.chat_widget
 +            .set_status_line_command_config(self.local_settings.status_line_command.clone());
          self.refresh_server_version_overview_notice(CODEX_CLI_VERSION);
-         // Other preferences have runtime caches and are adopted when the widget is replaced.
-         self.chat_widget
+         // Copy preferences read directly by the live widget. Other preferences have runtime
+         // caches and are adopted when the widget is replaced.
 diff --git a/codex-rs/tui/src/app/daemon_menu.rs b/codex-rs/tui/src/app/daemon_menu.rs
-index d5a354a0e95f73fc32b30ab003c552c62ce6d93b..ea5d5b2339a7234397a092c0674d7e48e6f156bb 100644
+index ada9e88080288debba15945286061c6b14c56103..7a9eef3c4611a12390db345fdd6c538f31feff41 100644
 --- a/codex-rs/tui/src/app/daemon_menu.rs
 +++ b/codex-rs/tui/src/app/daemon_menu.rs
-@@ -86,6 +86,14 @@ impl App {
+@@ -157,6 +157,14 @@ impl App {
      }
  
      pub(super) fn confirm_daemon_update(&mut self, source: DaemonUpdateSource) {
@@ -1575,7 +1709,7 @@ index d5a354a0e95f73fc32b30ab003c552c62ce6d93b..ea5d5b2339a7234397a092c0674d7e48
          let Some(executable) = &self.daemon_cli_executable else {
              return;
          };
-@@ -95,9 +103,11 @@ impl App {
+@@ -166,9 +174,11 @@ impl App {
          let mut explanation = match source {
              DaemonUpdateSource::PublicStable => "Install the latest public stable release. Restore production updates; keep your automatic-update setting.".to_string(),
              DaemonUpdateSource::ThisCli => {
@@ -1591,10 +1725,10 @@ index d5a354a0e95f73fc32b30ab003c552c62ce6d93b..ea5d5b2339a7234397a092c0674d7e48
              }
          };
 diff --git a/codex-rs/tui/src/app/daemon_menu_tests.rs b/codex-rs/tui/src/app/daemon_menu_tests.rs
-index 0928bf31f05a0d0d3c99dc884153fc8817a3a39a..9271dddc32246a98e10d14e94a0cbb2ceba349ba 100644
+index 0498495092a94fe97b683f199f01501e9bde21f5..96875ba3b1981d2cce9931f6ceac4865236c421d 100644
 --- a/codex-rs/tui/src/app/daemon_menu_tests.rs
 +++ b/codex-rs/tui/src/app/daemon_menu_tests.rs
-@@ -121,7 +121,7 @@ async fn daemon_menu_is_read_only_and_confirmation_can_cancel_or_handoff() {
+@@ -122,7 +122,7 @@ async fn daemon_menu_is_read_only_and_confirmation_can_cancel_or_handoff() {
              })
              .unwrap(),
          );
@@ -1642,19 +1776,19 @@ index a1a9a66c1cc653cd7227110b5866dada70f8110a..4cb03c331df9fb1284c3fdee5ccf4ef0
      app.transcript_cells
          .push(Arc::new(history_cell::StartupWarningsCell::mcp(
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 2979e0a9ab462f5366db64ce7357adc3acfcfba5..da2c4aa73ca0e643445b788eed605bd523625eda 100644
+index 550965d65ebb02b1d4f8bf0af92649037cb64446..2f31fd88bf5aea2ede36d37862d5d3b2539d4689 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -52,6 +52,8 @@ impl App {
+@@ -57,6 +57,8 @@ impl App {
              && !matches!(
                  &event,
                  AppEvent::OpenDaemonMenu
 +                    | AppEvent::StatusLineCommandOutput { .. }
 +                    | AppEvent::StatusLineCommandTick { .. }
                      | AppEvent::OpenWarnings
-                     | AppEvent::CopyWarning(_)
-                     | AppEvent::UpdateWarnings { .. }
-@@ -1034,6 +1036,7 @@ impl App {
+                     | AppEvent::StatusLineSetup { .. }
+                     | AppEvent::StatusLineSetupCancelled
+@@ -1067,6 +1069,7 @@ impl App {
                  }
              },
              AppEvent::FatalExitRequest(message) => {
@@ -1662,7 +1796,7 @@ index 2979e0a9ab462f5366db64ce7357adc3acfcfba5..da2c4aa73ca0e643445b788eed605bd5
                  return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
              }
              AppEvent::ImagesPrepared(id) => {
-@@ -2766,7 +2769,10 @@ impl App {
+@@ -2923,7 +2926,10 @@ impl App {
                          self.open_agents_overview(app_server);
                      }
                      AppRunControl::Continue => {}
@@ -1674,7 +1808,7 @@ index 2979e0a9ab462f5366db64ce7357adc3acfcfba5..da2c4aa73ca0e643445b788eed605bd5
                  }
              }
              AppEvent::ForkAgentsOverviewThread { thread_id } => {
-@@ -3209,6 +3215,23 @@ impl App {
+@@ -3388,6 +3394,23 @@ impl App {
                      }
                  }
              }
@@ -1698,7 +1832,7 @@ index 2979e0a9ab462f5366db64ce7357adc3acfcfba5..da2c4aa73ca0e643445b788eed605bd5
              AppEvent::StatusLineBranchUpdated { cwd, branch } => {
                  self.chat_widget.set_status_line_branch(cwd, branch);
                  self.refresh_status_line();
-@@ -3549,11 +3572,19 @@ impl App {
+@@ -3789,11 +3812,19 @@ impl App {
          }
      }
  
@@ -1718,27 +1852,27 @@ index 2979e0a9ab462f5366db64ce7357adc3acfcfba5..da2c4aa73ca0e643445b788eed605bd5
          for (request_id, (_, task)) in self.dynamic_tool_tasks.drain() {
              task.abort();
              let response = crate::dynamic_tools::failure_response(
-@@ -3645,6 +3676,7 @@ impl App {
+@@ -3895,6 +3926,7 @@ impl App {
          .await;
          Ok(match result {
-             Ok(()) if matches!(self.app_server_target, AppServerTarget::Embedded) => {
+             Ok(()) if !self.app_server_target.supports_command_center() => {
 +                self.shutdown_status_line_commands().await;
                  AppRunControl::Exit(ExitReason::Archived(thread_id))
              }
              Ok(()) => {
-@@ -3713,6 +3745,7 @@ impl App {
+@@ -3963,6 +3995,7 @@ impl App {
          .await;
          Ok(match result {
-             Ok(()) if matches!(self.app_server_target, AppServerTarget::Embedded) => {
+             Ok(()) if !self.app_server_target.supports_command_center() => {
 +                self.shutdown_status_line_commands().await;
                  AppRunControl::Exit(ExitReason::ThreadRemoved)
              }
              Ok(()) => {
 diff --git a/codex-rs/tui/src/app/startup.rs b/codex-rs/tui/src/app/startup.rs
-index 69a4ff5f3ee2fe6a3ffb8dc993c675ae29dba738..399c22646f333fc199ece7d0c631d6e35dd6aa25 100644
+index f1e83e5a5fc6c5aeb6490314de65a4c1ad3fe686..caa6d18a3cb62e7e13ef3ade1c92e2d99d4b1daa 100644
 --- a/codex-rs/tui/src/app/startup.rs
 +++ b/codex-rs/tui/src/app/startup.rs
-@@ -537,6 +537,7 @@ impl App {
+@@ -609,6 +609,7 @@ impl App {
                      }
                  };
                  let init = crate::chatwidget::ChatWidgetInit {
@@ -1746,7 +1880,7 @@ index 69a4ff5f3ee2fe6a3ffb8dc993c675ae29dba738..399c22646f333fc199ece7d0c631d6e3
                      local_settings: local_settings.clone(),
                      config: config.clone(),
                      frame_requester: tui.frame_requester(),
-@@ -671,6 +672,7 @@ impl App {
+@@ -759,6 +760,7 @@ impl App {
                      }
                  };
                  let init = crate::chatwidget::ChatWidgetInit {
@@ -1754,7 +1888,7 @@ index 69a4ff5f3ee2fe6a3ffb8dc993c675ae29dba738..399c22646f333fc199ece7d0c631d6e3
                      local_settings: local_settings.clone(),
                      config: config.clone(),
                      frame_requester: tui.frame_requester(),
-@@ -779,6 +781,7 @@ impl App {
+@@ -872,6 +874,7 @@ impl App {
                      }
                  }
                  let init = crate::chatwidget::ChatWidgetInit {
@@ -1762,31 +1896,31 @@ index 69a4ff5f3ee2fe6a3ffb8dc993c675ae29dba738..399c22646f333fc199ece7d0c631d6e3
                      local_settings: local_settings.clone(),
                      config: config.clone(),
                      frame_requester: tui.frame_requester(),
-@@ -866,6 +869,7 @@ See the Codex keymap documentation for supported actions and examples."
+@@ -965,6 +968,7 @@ See the Codex keymap documentation for supported actions and examples."
          let agents_overview =
              agents_overview::AgentsOverviewState::new(local_settings.tui.agents_overview_grouping);
          let mut app = Self {
 +            client_version: crate::version::CODEX_CLI_VERSION,
              feature_write_lock: Arc::default(),
-             model_catalog,
-             session_telemetry: session_telemetry.clone(),
+             config_notification_test_generation: 0,
+             config_notification_test_pending: None,
 diff --git a/codex-rs/tui/src/app/test_support.rs b/codex-rs/tui/src/app/test_support.rs
-index 8b5901c606fba350b3dfe43b7852608b93164246..6fd2934fc6bd688492b74e7e4ebc9e9c04b7b5fb 100644
+index a0efb33101b4f3b5a31d15e10815cbf8064cb890..3aee1056cb93c27d30950adb87ed25c82aecaaa5 100644
 --- a/codex-rs/tui/src/app/test_support.rs
 +++ b/codex-rs/tui/src/app/test_support.rs
-@@ -18,6 +18,7 @@ pub(crate) async fn make_test_app() -> App {
+@@ -21,6 +21,7 @@ pub(crate) async fn make_test_app() -> Box<App> {
      let session_telemetry = test_session_telemetry(&config, model.as_str());
  
-     App {
+     Box::new(App {
 +        client_version: "0.0.0",
          feature_write_lock: Arc::default(),
-         model_catalog: chat_widget.model_catalog(),
-         session_telemetry,
+         config_notification_test_generation: 0,
+         config_notification_test_pending: None,
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index 73bc892cc5c69c3cd775a24d884f1db9493cb8b6..c852ccae4efb19963e64cc028b97cfdfe84a886a 100644
+index a2d219157e81a9e140b07ad5d505a4bbc030b96e..0e65d91ffb725b4a3ab93db5ca31e18ba4602a24 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
-@@ -750,6 +750,7 @@ fn set_test_initial_prompt(app: &mut App, initial_prompt: String) {
+@@ -878,6 +878,7 @@ fn set_test_initial_prompt(app: &mut App, initial_prompt: String) {
      let config = app.config.clone();
      let model = get_model_offline_for_tests(config.model.as_deref());
      app.chat_widget = ChatWidget::new_with_app_event(ChatWidgetInit {
@@ -1794,7 +1928,224 @@ index 73bc892cc5c69c3cd775a24d884f1db9493cb8b6..c852ccae4efb19963e64cc028b97cfdf
          requires_openai_auth: true,
          local_settings: crate::local_settings::LocalSettings::from(&config),
          config,
-@@ -5999,6 +6000,7 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
+@@ -3120,8 +3121,31 @@ async fn refresh_agent_picker_thread_liveness_prunes_closed_metadata_only_thread
+ 
+ #[tokio::test]
+ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()> {
+-    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
++    async fn bounded<T>(phase: &str, operation: impl std::future::Future<Output = T>) -> T {
++        use std::io::Write as _;
++
++        // Bypass libtest capture so a blocked step remains visible in the CI log.
++        let _ = writeln!(std::io::stderr(), "codexs_side_test phase={phase} started");
++        let result = time::timeout(std::time::Duration::from_secs(60), Box::pin(operation))
++            .await
++            .unwrap_or_else(|_| {
++                panic!("side-conversation fixture timed out after 60s during {phase}")
++            });
++        let _ = writeln!(std::io::stderr(), "codexs_side_test phase={phase} completed");
++        result
++    }
++
++    let (mut app, mut app_event_rx, _op_rx) =
++        bounded("create-app", make_test_app_with_channels()).await;
+     let config = app.chat_widget.config_ref().clone();
++    // Choose the fixture folder and trust explicitly so navigation needs no terminal input.
++    app.harness_overrides.cwd = Some(config.cwd.to_path_buf());
++    crate::legacy_core::config::set_project_trust_level(
++        config.codex_home.as_path(),
++        config.cwd.as_path(),
++        codex_protocol::config_types::TrustLevel::Trusted,
++    )
++    .map_err(std::io::Error::other)?;
+     let parent_thread_id = ThreadId::from_string(
+         &app_test_support::create_fake_rollout(
+             config.codex_home.as_path(),
+@@ -3144,40 +3168,55 @@ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()
+         )
+         .expect("create other rollout"),
+     )?;
+-    let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(&config)).await?;
+-    let started = app_server
+-        .resume_thread(
++    let mut app_server = bounded(
++        "start-embedded-server",
++        crate::start_embedded_app_server_for_picker(&config),
++    )
++    .await?;
++    let started = bounded(
++        "resume-parent",
++        app_server.resume_thread(
+             &crate::local_settings::LocalSettings::from(&config),
+             config,
+             parent_thread_id,
+             crate::app_server_session::ResumeModelSettings::RestoreFromThread,
+-        )
+-        .await?;
+-    app.enqueue_primary_thread_session(started.session, started.turns)
+-        .await?;
++        ),
++    )
++    .await?;
++    bounded(
++        "enqueue-parent-session",
++        app.enqueue_primary_thread_session(started.session, started.turns),
++    )
++    .await?;
+     while app_event_rx.try_recv().is_ok() {}
+     let mut tui = crate::tui::test_support::make_test_tui()?;
+ 
+     app.runtime_permission_profile_override = Some(RuntimePermissionProfileOverride::from_config(
+         app.chat_widget.config_ref(),
+     ));
+-    app.select_permission_profile(
+-        &mut app_server,
+-        PermissionProfileSelection {
+-            profile_id: ":read-only".into(),
+-            approval_policy: Some(AskForApproval::OnRequest),
+-            approvals_reviewer: Some(ApprovalsReviewer::User),
+-            display_label: "Read Only".into(),
+-        },
++    bounded(
++        "select-read-only",
++        app.select_permission_profile(
++            &mut app_server,
++            PermissionProfileSelection {
++                profile_id: ":read-only".into(),
++                approval_policy: Some(AskForApproval::OnRequest),
++                approvals_reviewer: Some(ApprovalsReviewer::User),
++                display_label: "Read Only".into(),
++            },
++        ),
+     )
+     .await;
+ 
+-    let control = Box::pin(app.handle_start_side(
+-        &mut tui,
+-        &mut app_server,
+-        parent_thread_id,
+-        /*user_message*/ None,
+-    ))
++    let control = bounded(
++        "start-side",
++        app.handle_start_side(
++            &mut tui,
++            &mut app_server,
++            parent_thread_id,
++            /*user_message*/ None,
++        ),
++    )
+     .await?;
+ 
+     let side_thread_id = app
+@@ -3224,41 +3263,69 @@ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()
+             app.chat_widget.config_ref()
+         ))
+     );
+-    app.select_agents_overview_thread(&mut tui, &mut app_server, other_thread_id)
+-        .await?;
+-    app.select_agents_overview_thread(&mut tui, &mut app_server, parent_thread_id)
+-        .await?;
+-    Box::pin(app.handle_start_side(
+-        &mut tui,
+-        &mut app_server,
+-        parent_thread_id,
+-        /*user_message*/ None,
+-    ))
++    bounded(
++        "select-other-thread",
++        app.select_agents_overview_thread(&mut tui, &mut app_server, other_thread_id),
++    )
++    .await?;
++    bounded(
++        "return-to-parent",
++        app.select_agents_overview_thread(&mut tui, &mut app_server, parent_thread_id),
++    )
++    .await?;
++    bounded(
++        "reuse-side",
++        app.handle_start_side(
++            &mut tui,
++            &mut app_server,
++            parent_thread_id,
++            /*user_message*/ None,
++        ),
++    )
+     .await?;
+     assert_eq!(app.active_thread_id, Some(side_thread_id));
+     assert_eq!(app.side_threads.len(), 1);
+-    app.select_agent_thread(&mut tui, &mut app_server, parent_thread_id)
+-        .await?;
+-    app.select_permission_profile(
+-        &mut app_server,
+-        PermissionProfileSelection {
+-            profile_id: ":workspace".into(),
+-            approval_policy: Some(AskForApproval::OnRequest),
+-            approvals_reviewer: Some(ApprovalsReviewer::User),
+-            display_label: "Workspace".into(),
+-        },
++    bounded(
++        "select-parent-for-permissions",
++        app.select_agent_thread(&mut tui, &mut app_server, parent_thread_id),
++    )
++    .await?;
++    bounded(
++        "select-workspace-permissions",
++        app.select_permission_profile(
++            &mut app_server,
++            PermissionProfileSelection {
++                profile_id: ":workspace".into(),
++                approval_policy: Some(AskForApproval::OnRequest),
++                approvals_reviewer: Some(ApprovalsReviewer::User),
++                display_label: "Workspace".into(),
++            },
++        ),
+     )
+     .await;
+-    app.select_agent_thread(&mut tui, &mut app_server, side_thread_id)
+-        .await?;
+-    let settings = next_thread_settings_updated(&mut app_server, parent_thread_id).await;
+-    app.enqueue_thread_notification(
+-        parent_thread_id,
+-        ServerNotification::ThreadSettingsUpdated(settings),
++    bounded(
++        "select-side-for-notification",
++        app.select_agent_thread(&mut tui, &mut app_server, side_thread_id),
++    )
++    .await?;
++    let settings = bounded(
++        "wait-parent-settings",
++        next_thread_settings_updated(&mut app_server, parent_thread_id),
++    )
++    .await;
++    bounded(
++        "enqueue-parent-settings",
++        app.enqueue_thread_notification(
++            parent_thread_id,
++            ServerNotification::ThreadSettingsUpdated(settings),
++        ),
++    )
++    .await?;
++    bounded(
++        "return-to-parent-after-settings",
++        app.select_agent_thread(&mut tui, &mut app_server, parent_thread_id),
+     )
+     .await?;
+-    app.select_agent_thread(&mut tui, &mut app_server, parent_thread_id)
+-        .await?;
+     assert_eq!(
+         app.config
+             .permissions
+@@ -3274,7 +3341,7 @@ async fn handle_start_side_seeds_navigation_before_thread_started() -> Result<()
+         ))
+     );
+ 
+-    app_server.shutdown().await?;
++    bounded("shutdown-server", app_server.shutdown()).await?;
+     Ok(())
+ }
+ 
+@@ -6277,6 +6344,7 @@ async fn render_clear_ui_header_after_long_transcript_for_snapshot() -> String {
              is_first,
              /*tooltip_override*/ None,
              /*auth_plan*/ None,
@@ -1802,23 +2153,23 @@ index 73bc892cc5c69c3cd775a24d884f1db9493cb8b6..c852ccae4efb19963e64cc028b97cfdf
          )) as Arc<dyn HistoryCell>
      };
  
-@@ -6129,6 +6131,7 @@ async fn make_test_app() -> Box<App> {
+@@ -6408,6 +6476,7 @@ async fn make_test_app() -> Box<App> {
      let session_telemetry = test_session_telemetry(&config, model.as_str());
  
      Box::new(App {
 +        client_version: "0.0.0",
          feature_write_lock: Arc::default(),
-         model_catalog: chat_widget.model_catalog(),
-         session_telemetry,
-@@ -6249,6 +6252,7 @@ pub(super) async fn make_test_app_with_channels() -> (
+         config_notification_test_generation: 0,
+         config_notification_test_pending: None,
+@@ -6534,6 +6603,7 @@ pub(super) async fn make_test_app_with_channels() -> (
  
      (
          Box::new(App {
 +            client_version: "0.0.0",
              feature_write_lock: Arc::default(),
-             model_catalog: chat_widget.model_catalog(),
-             session_telemetry,
-@@ -7212,6 +7216,9 @@ async fn resizing_empty_transcript_schedules_settled_size_recheck() {
+             config_notification_test_generation: 0,
+             config_notification_test_pending: None,
+@@ -7505,6 +7575,9 @@ async fn resizing_empty_transcript_schedules_settled_size_recheck() {
      tui.screen_size_for_event(&TuiEvent::Resize(resized_size))
          .expect("resolve resize event");
      tui.terminal.resize(resized_size).expect("apply event size");
@@ -1828,7 +2179,7 @@ index 73bc892cc5c69c3cd775a24d884f1db9493cb8b6..c852ccae4efb19963e64cc028b97cfdf
      assert!(app.handle_draw_size_change(resized_size, initial_size, &frame_requester));
      tokio::time::sleep(crate::transcript_reflow::TRANSCRIPT_REFLOW_DEBOUNCE).await;
      assert_eq!(
-@@ -7712,6 +7719,7 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
+@@ -8005,6 +8078,7 @@ async fn backtrack_selection_preserves_selected_prompt_and_requests_branch() {
              is_first,
              /*tooltip_override*/ None,
              /*auth_plan*/ None,
@@ -1836,7 +2187,7 @@ index 73bc892cc5c69c3cd775a24d884f1db9493cb8b6..c852ccae4efb19963e64cc028b97cfdf
          )) as Arc<dyn HistoryCell>
      };
  
-@@ -8901,6 +8909,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
+@@ -9245,6 +9319,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
      );
  
      let replacement = ChatWidget::new_with_app_event(ChatWidgetInit {
@@ -1844,10 +2195,10 @@ index 73bc892cc5c69c3cd775a24d884f1db9493cb8b6..c852ccae4efb19963e64cc028b97cfdf
          requires_openai_auth: true,
          local_settings: crate::local_settings::LocalSettings::from(&app.config),
          config: app.config.clone(),
-@@ -9967,3 +9976,29 @@ mod active_reconnect;
- #[cfg(unix)]
- #[path = "tests/navigation_reconnect_tests.rs"]
- mod navigation_reconnect;
+@@ -10345,3 +10420,29 @@ mod navigation_reconnect;
+ 
+ #[path = "tests/backend_event_tests.rs"]
+ mod backend_event_tests;
 +
 +#[tokio::test]
 +async fn status_line_command_production_metadata_survives_widget_replacement() {
@@ -1875,10 +2226,10 @@ index 73bc892cc5c69c3cd775a24d884f1db9493cb8b6..c852ccae4efb19963e64cc028b97cfdf
 +    }
 +}
 diff --git a/codex-rs/tui/src/app/tests/active_reconnect_tests.rs b/codex-rs/tui/src/app/tests/active_reconnect_tests.rs
-index 18fbde768d8e88e954c5c266c56cd67fd21d3dec..197faaf4bd8fb2c56e90dbd2089c5975e0ad0489 100644
+index d77c233ba7bc5f60e5922ec17ef2dff2ea461389..1fb3749cc8ec4d21df54b39ff7cbce0f4a60cc55 100644
 --- a/codex-rs/tui/src/app/tests/active_reconnect_tests.rs
 +++ b/codex-rs/tui/src/app/tests/active_reconnect_tests.rs
-@@ -668,6 +668,7 @@ async fn reconnect_exhaustion_and_unknown_initial_thread_stay_offline() -> Resul
+@@ -677,6 +677,7 @@ async fn reconnect_exhaustion_and_unknown_initial_thread_stay_offline() -> Resul
  async fn reconnect_allows_slow_hydration_but_bounds_a_stalled_server() -> Result<()> {
      for delay in [15, 150] {
          let (mut app, mut events, _) = make_test_app_with_channels().await;
@@ -1886,7 +2237,7 @@ index 18fbde768d8e88e954c5c266c56cd67fd21d3dec..197faaf4bd8fb2c56e90dbd2089c5975
          app.config.model = Some("gpt-test".into());
          let listener = TcpListener::bind("127.0.0.1:0").await?;
          let endpoint = crate::RemoteAppServerEndpoint::WebSocket {
-@@ -718,14 +719,8 @@ async fn reconnect_allows_slow_hydration_but_bounds_a_stalled_server() -> Result
+@@ -728,14 +729,8 @@ async fn reconnect_allows_slow_hydration_but_bounds_a_stalled_server() -> Result
              app.begin_reconnect();
              let mut session = crate::start_embedded_app_server_for_picker(&app.config).await?;
              let mut tui = crate::tui::test_support::make_test_tui()?;
@@ -1904,10 +2255,16 @@ index 18fbde768d8e88e954c5c266c56cd67fd21d3dec..197faaf4bd8fb2c56e90dbd2089c5975
              app.handle_tui_event(
                  &mut tui,
 diff --git a/codex-rs/tui/src/app/tests/background_exit_tests.rs b/codex-rs/tui/src/app/tests/background_exit_tests.rs
-index 3d2c8066de2ad2456b720930d74d741405d969a0..28df81fa601caa84bd2519fdcec331da84c94b62 100644
+index 8acf351f4f98f2431d628b8862717735fcb6d125..ef4a7bfd056af3e0cdfb4da02a18f725a9d137cf 100644
 --- a/codex-rs/tui/src/app/tests/background_exit_tests.rs
 +++ b/codex-rs/tui/src/app/tests/background_exit_tests.rs
-@@ -447,9 +447,14 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
+@@ -1,4 +1,5 @@
+ use super::*;
++use codex_app_server_protocol::ThreadItemPayload;
+ use pretty_assertions::assert_eq;
+ 
+ #[tokio::test]
+@@ -444,9 +445,14 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
      // the directory also releases it if the test fails before reaching the exit.
      let running = tempdir()?;
      let running_path = running.path().to_string_lossy();
@@ -1923,7 +2280,7 @@ index 3d2c8066de2ad2456b720930d74d741405d969a0..28df81fa601caa84bd2519fdcec331da
              running_path.replace('\'', "''"),
          )
      } else {
-@@ -459,7 +464,11 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
+@@ -456,7 +462,11 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
          )
      };
      app_server.thread_shell_command(thread_id, command).await?;
@@ -1936,14 +2293,15 @@ index 3d2c8066de2ad2456b720930d74d741405d969a0..28df81fa601caa84bd2519fdcec331da
          let mut turn_id = None;
          let mut output = String::new();
          loop {
-@@ -467,19 +476,31 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
+@@ -464,6 +474,7 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
                  .next_event()
                  .await
                  .expect("app-server event stream should remain open");
 +            readiness_events += 1;
-             if let codex_app_server_client::AppServerEvent::ServerNotification(notification) = event
+             if let codex_app_server_client::AppServerEvent::ServerNotification(notification) =
+                 event.event
              {
-                 match notification.as_ref() {
+@@ -471,13 +482,24 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
                      ServerNotification::TurnStarted(notification)
                          if notification.thread_id == thread_id.to_string() =>
                      {
@@ -1959,8 +2317,8 @@ index 3d2c8066de2ad2456b720930d74d741405d969a0..28df81fa601caa84bd2519fdcec331da
 +                    ServerNotification::ItemStarted(notification)
 +                        if notification.thread_id == thread_id.to_string()
 +                            && matches!(
-+                                &notification.item,
-+                                codex_app_server_protocol::ThreadItem::CommandExecution { .. }
++                                &notification.item.payload,
++                                ThreadItemPayload::CommandExecution { .. }
 +                            ) =>
 +                    {
 +                        readiness_command_started = true;
@@ -1968,7 +2326,7 @@ index 3d2c8066de2ad2456b720930d74d741405d969a0..28df81fa601caa84bd2519fdcec331da
                      ServerNotification::TurnCompleted(notification)
                          if notification.thread_id == thread_id.to_string() =>
                      {
-@@ -495,8 +516,16 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
+@@ -493,8 +515,16 @@ async fn exit_interrupts_before_requesting_shutdown() -> Result<()> {
              }
          }
      })
@@ -1988,10 +2346,10 @@ index 3d2c8066de2ad2456b720930d74d741405d969a0..28df81fa601caa84bd2519fdcec331da
          thread_id,
          ThreadEventChannel::new_with_session(
 diff --git a/codex-rs/tui/src/app/tests/safety_buffering.rs b/codex-rs/tui/src/app/tests/safety_buffering.rs
-index 71a8f2b5bb7676b9d553b1801fae187608762268..f970658752f9e68be7fe35f52c139878a3b02b45 100644
+index 8fe1861c74591ed99a4121a73f7f6ebf677d9b12..e196ca529430936f2723ea685b48472fc76affeb 100644
 --- a/codex-rs/tui/src/app/tests/safety_buffering.rs
 +++ b/codex-rs/tui/src/app/tests/safety_buffering.rs
-@@ -401,7 +401,9 @@ stream_max_retries = 0
+@@ -547,7 +547,9 @@ stream_max_retries = 0
          None
      );
  
@@ -2003,10 +2361,10 @@ index 71a8f2b5bb7676b9d553b1801fae187608762268..f970658752f9e68be7fe35f52c139878
          std::iter::from_fn(|| app_event_rx.try_recv().ok())
              .all(|event| !matches!(event, AppEvent::CodexOp(AppCommand::UserTurn { .. })))
 diff --git a/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs b/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
-index b40809456fc2139235d2b59a0020d1b9a985ea40..769b6438d8e6c53d7a4404816f7731729acf1b65 100644
+index f7812089cb68682763e0b44d175d7876367bdafa..981934d5bc81caf8d8474135a662953bdfd87dee 100644
 --- a/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
 +++ b/codex-rs/tui/src/app/tests/session_lifecycle_requests.rs
-@@ -433,6 +433,29 @@ pub(super) async fn start_recording_realtime_speech_app_server(
+@@ -477,6 +477,29 @@ pub(super) async fn start_recording_realtime_speech_app_server(
  }
  
  pub(super) async fn start_recording_app_server_with_realtime_speech(
@@ -2036,7 +2394,7 @@ index b40809456fc2139235d2b59a0020d1b9a985ea40..769b6438d8e6c53d7a4404816f773172
      config: &Config,
      history_capabilities: HistoryCapabilities,
      mut blocked_thread_list: Option<(ThreadId, oneshot::Sender<()>, oneshot::Receiver<()>)>,
-@@ -440,6 +463,7 @@ pub(super) async fn start_recording_app_server_with_realtime_speech(
+@@ -484,6 +507,7 @@ pub(super) async fn start_recording_app_server_with_realtime_speech(
      thread_params_mode: crate::app_server_session::ThreadParamsMode,
      realtime_behavior: RealtimeRequestBehavior,
      loader_overrides: LoaderOverrides,
@@ -2044,7 +2402,7 @@ index b40809456fc2139235d2b59a0020d1b9a985ea40..769b6438d8e6c53d7a4404816f773172
  ) -> Result<RecordingAppServer> {
      let state_db =
          crate::init_state_db_for_app_server_target(config, &crate::AppServerTarget::Embedded)
-@@ -471,6 +495,14 @@ pub(super) async fn start_recording_app_server_with_realtime_speech(
+@@ -515,6 +539,14 @@ pub(super) async fn start_recording_app_server_with_realtime_speech(
          let mut reject_thread_list = history_capabilities == HistoryCapabilities::ThreadListFails;
          loop {
              let frame = tokio::select! {
@@ -2059,21 +2417,7 @@ index b40809456fc2139235d2b59a0020d1b9a985ea40..769b6438d8e6c53d7a4404816f773172
                  frame = websocket.next() => frame,
                  event = embedded.next_event() => {
                      let Some(event) = event else { break };
-@@ -489,7 +521,12 @@ pub(super) async fn start_recording_app_server_with_realtime_speech(
-                     tokio_tungstenite::tungstenite::error::ProtocolError::ResetWithoutClosingHandshake,
-                 )) => break,
-                 Err(tokio_tungstenite::tungstenite::Error::Io(error))
--                    if matches!(error.kind(), std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset) => break,
-+                    if matches!(
-+                        error.kind(),
-+                        std::io::ErrorKind::BrokenPipe
-+                            | std::io::ErrorKind::ConnectionReset
-+                            | std::io::ErrorKind::ConnectionAborted
-+                    ) => break,
-                 _ => {}
-             }
-             let Message::Text(text) = frame? else {
-@@ -2974,6 +3011,7 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
+@@ -3194,6 +3226,7 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
              /*is_first_event*/ false,
              Some("This is a test announcement".to_string()),
              /*auth_plan*/ None,
@@ -2081,7 +2425,7 @@ index b40809456fc2139235d2b59a0020d1b9a985ea40..769b6438d8e6c53d7a4404816f773172
          )),
      );
      app.enqueue_primary_thread_session(started.session, started.turns)
-@@ -4319,6 +4357,14 @@ async fn changing_directory_preserves_project_trust_permissions_history_and_hook
+@@ -4539,6 +4572,14 @@ async fn changing_directory_preserves_project_trust_permissions_history_and_hook
              app.enqueue_thread_notification(closed, thread_closed_notification(closed))
                  .await?;
          }
@@ -2097,10 +2441,10 @@ index b40809456fc2139235d2b59a0020d1b9a985ea40..769b6438d8e6c53d7a4404816f773172
          app.change_working_directory(&mut tui, &mut server, failed.clone().abs())
              .await;
 diff --git a/codex-rs/tui/src/app/tests/startup_defaults_tests.rs b/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
-index 6f0fd8bdb4bc9f15b0fa9050ac233d14190bcee9..0595d7a1cecfc7dbd7a252bf254a8ce0b2cb2251 100644
+index b964d4519595dea6e0229c4bf4e153d68790d492..928fb77234b9d667de513caa4d4fcd4689df66c0 100644
 --- a/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
 +++ b/codex-rs/tui/src/app/tests/startup_defaults_tests.rs
-@@ -4,6 +4,7 @@ use super::*;
+@@ -5,6 +5,7 @@ use crate::app::backend_sessions::InitialBackendSessions;
  use crate::app::startup::prepare_fresh_startup_config;
  use crate::app::startup::startup_model;
  use crate::app::startup_bootstrap::bootstrap_server_owned_start;
@@ -2108,7 +2452,26 @@ index 6f0fd8bdb4bc9f15b0fa9050ac233d14190bcee9..0595d7a1cecfc7dbd7a252bf254a8ce0
  use pretty_assertions::assert_eq;
  
  fn remote_target() -> AppServerTarget {
-@@ -244,10 +245,31 @@ async fn run_until_thread_start(
+@@ -24,7 +25,8 @@ pub(super) async fn run_startup_for_test(
+     selection: SessionSelection,
+     app_server_target: AppServerTarget,
+ ) -> Result<AppExitInfo> {
+-    App::run(
++    // Construct the large startup future outside this helper's poll frame.
++    boxed_future!(App::run(
+         tui,
+         initial_backends,
+         config.clone(),
+@@ -50,7 +52,7 @@ pub(super) async fn run_startup_for_test(
+         crate::startup_draft::tests::quiet_startup_test_pump(),
+         /*managed_worktree*/ None,
+         /*daemon_cli_executable*/ None,
+-    )
++    ))
+     .await
+ }
+ 
+@@ -248,10 +250,31 @@ async fn run_until_thread_start(
              }
          }
      })
@@ -2141,7 +2504,7 @@ index 6f0fd8bdb4bc9f15b0fa9050ac233d14190bcee9..0595d7a1cecfc7dbd7a252bf254a8ce0
  #[tokio::test]
  async fn fresh_startup_uses_server_defaults_with_explicit_and_managed_precedence() -> Result<()> {
      for (choice, managed, expected_model, expected_effort, expected_provider) in [
-@@ -599,16 +621,11 @@ async fn fresh_startup_falls_back_only_for_unsupported_config_read() -> Result<(
+@@ -695,16 +718,11 @@ async fn fresh_startup_falls_back_only_for_unsupported_config_read() -> Result<(
              .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
              .build()
              .await?;
@@ -2162,7 +2525,7 @@ index 6f0fd8bdb4bc9f15b0fa9050ac233d14190bcee9..0595d7a1cecfc7dbd7a252bf254a8ce0
          run_until_thread_start(server, config, bootstrap, &requests).await?;
          let starts = recorded_params(&requests, "thread/start");
          assert_eq!(starts.len(), 1);
-@@ -619,7 +636,12 @@ async fn fresh_startup_falls_back_only_for_unsupported_config_read() -> Result<(
+@@ -715,7 +733,12 @@ async fn fresh_startup_falls_back_only_for_unsupported_config_read() -> Result<(
              ),
              (&serde_json::Value::Null, &serde_json::Value::Null)
          );
@@ -2176,7 +2539,7 @@ index 6f0fd8bdb4bc9f15b0fa9050ac233d14190bcee9..0595d7a1cecfc7dbd7a252bf254a8ce0
      }
      Ok(())
  }
-@@ -644,12 +666,9 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
+@@ -745,12 +768,9 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
      let mut server_config = config.clone();
      server_config.codex_home = server_home.path().to_path_buf().abs();
      server_config.sqlite = SqliteConfig::new_for_testing(server_home.path().abs());
@@ -2189,8 +2552,8 @@ index 6f0fd8bdb4bc9f15b0fa9050ac233d14190bcee9..0595d7a1cecfc7dbd7a252bf254a8ce0
 -        crate::app_server_session::ThreadParamsMode::Embedded,
          LoaderOverrides {
              user_config_path: Some(server_home.path().join("config.toml").abs()),
-             ..LoaderOverrides::default()
-@@ -657,6 +676,7 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
+             ..LoaderOverrides::without_managed_config_for_tests()
+@@ -758,6 +778,7 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
      )
      .await?;
      let bootstrap = server.bootstrap(&config).await?;
@@ -2198,7 +2561,7 @@ index 6f0fd8bdb4bc9f15b0fa9050ac233d14190bcee9..0595d7a1cecfc7dbd7a252bf254a8ce0
      run_until_thread_start(server, config, bootstrap, &requests).await?;
      {
          let recorded = requests.lock().expect("request recorder lock");
-@@ -679,7 +699,11 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
+@@ -781,7 +802,11 @@ async fn startup_reads_server_defaults_before_starting_thread() -> Result<()> {
          ),
          (&serde_json::Value::Null, &serde_json::Value::Null),
      );
@@ -2212,7 +2575,7 @@ index 6f0fd8bdb4bc9f15b0fa9050ac233d14190bcee9..0595d7a1cecfc7dbd7a252bf254a8ce0
  }
  
 diff --git a/codex-rs/tui/src/app/tests/startup_frame_tests.rs b/codex-rs/tui/src/app/tests/startup_frame_tests.rs
-index c65cc64eab9acc3ff8b6eaad8f185e71823861b0..f821713a2cc8b64a23ae4de9569fbb1ed90f7a42 100644
+index 9fe4a7663bdbd4555fd1d4679dd56bd55f517514..a0aa6e9d136206261f08b1fd6a94fc5292946253 100644
 --- a/codex-rs/tui/src/app/tests/startup_frame_tests.rs
 +++ b/codex-rs/tui/src/app/tests/startup_frame_tests.rs
 @@ -31,6 +31,7 @@ async fn owned_startup_hides_tip_in_transcript() -> Result<()> {
@@ -2224,7 +2587,7 @@ index c65cc64eab9acc3ff8b6eaad8f185e71823861b0..f821713a2cc8b64a23ae4de9569fbb1e
      app.transcript_cells = vec![
          Arc::new(session_info),
 diff --git a/codex-rs/tui/src/app/tests/startup_warnings_tests.rs b/codex-rs/tui/src/app/tests/startup_warnings_tests.rs
-index 0f4c92a2186fba9f8647831343a1318584bb42b6..b1d133db8e6a1534ff7e7caff0a883c12b97c7d2 100644
+index 8cd33f21d27df8dfd7488a84f2c5495601d041d9..53ff0eaca35c2018dd653871af1b054574fb7366 100644
 --- a/codex-rs/tui/src/app/tests/startup_warnings_tests.rs
 +++ b/codex-rs/tui/src/app/tests/startup_warnings_tests.rs
 @@ -28,6 +28,7 @@ fn insert_splash(app: &mut App, tui: &mut tui::Tui) {
@@ -2235,11 +2598,24 @@ index 0f4c92a2186fba9f8647831343a1318584bb42b6..b1d133db8e6a1534ff7e7caff0a883c1
          )),
      );
  }
+diff --git a/codex-rs/tui/src/app/turn_tips_tests.rs b/codex-rs/tui/src/app/turn_tips_tests.rs
+index 8d79bdf06a4ab960a0ab42f7a832ecea01e9d0ba..cbfb338cad92f3abc1405f0171dc496eab6463fe 100644
+--- a/codex-rs/tui/src/app/turn_tips_tests.rs
++++ b/codex-rs/tui/src/app/turn_tips_tests.rs
+@@ -282,7 +282,7 @@ async fn turn_tip_placements_and_completion_barrier() -> Result<()> {
+             assert_eq!(app.turn_tips.completions_shown, usize::from(!working));
+         }
+         if !working && shown {
+-            if rows == 1 && size == tui.terminal.size()? {
++            if rows == 1 && size == Size::new(80, 24) {
+                 app.local_settings.tui.copy_on_select = CopyOnSelect::Always;
+                 let (row, line) = screen
+                     .lines()
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 4c6ede335f45c3ad7a69a6cdc5364325a47bb49c..46a532e4291f843fb2e32843f78987414ab89b73 100644
+index 2adc3036ae932a2cf873062c13b2775da3c8333a..72ac12a11dcb25be0ba7acc7fec69159e8d121da 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -1575,6 +1575,19 @@ pub(crate) enum AppEvent {
+@@ -1632,6 +1632,19 @@ pub(crate) enum AppEvent {
      /// Launch the external editor after a normal draw has completed.
      LaunchExternalEditor,
  
@@ -2260,10 +2636,10 @@ index 4c6ede335f45c3ad7a69a6cdc5364325a47bb49c..46a532e4291f843fb2e32843f7898741
      StatusLineBranchUpdated {
          cwd: PathBuf,
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index c919e31c92ed420704de33ba627127cbada50711..cba364459340c0dbbf61cf31e811f3c16160d933 100644
+index aa50df3dcea93c426add2323870102f9eb249f1d..726b1c163b49c4e1ca8b137f84175813d173fc55 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-@@ -594,6 +594,8 @@ impl ChatComposerConfig {
+@@ -620,6 +620,8 @@ impl ChatComposerConfig {
  }
  
  pub(crate) struct ChatComposer {
@@ -2271,17 +2647,17 @@ index c919e31c92ed420704de33ba627127cbada50711..cba364459340c0dbbf61cf31e811f3c1
 +    command_width: std::cell::Cell<Option<(u16, usize)>>,
      draft: DraftState,
      popups: PopupState,
-     app_event_tx: AppEventSender,
-@@ -730,6 +732,8 @@ impl ChatComposer {
+     pub(super) mention_usage: MentionUsage,
+@@ -760,6 +762,8 @@ impl ChatComposer {
              app_event_tx,
              history: ChatComposerHistory::new(),
-             agents_navigation_enabled: false,
+             command_center_enabled: false,
 +            command_width_enabled: false,
 +            command_width: std::cell::Cell::new(None),
              footer: FooterState {
                  quit_shortcut_expires_at: None,
                  quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
-@@ -832,6 +836,38 @@ impl ChatComposer {
+@@ -864,6 +868,38 @@ impl ChatComposer {
          self.frame_requester = Some(frame_requester);
      }
  
@@ -2320,7 +2696,7 @@ index c919e31c92ed420704de33ba627127cbada50711..cba364459340c0dbbf61cf31e811f3c1
      /// Records the effective reasoning tier, captures the outgoing status
      /// line, and queues the one-shot effects for a genuine Max/Ultra change
      /// after the initial baseline.
-@@ -4669,6 +4705,28 @@ impl ChatComposer {
+@@ -4778,6 +4814,28 @@ impl ChatComposer {
                              Some(self.right_footer_line_with_context())
                          };
                      let right_width = right_line.as_ref().map(|l| l.width() as u16).unwrap_or(0);
@@ -2350,7 +2726,7 @@ index c919e31c92ed420704de33ba627127cbada50711..cba364459340c0dbbf61cf31e811f3c1
                          && let Some(max_left) = max_left_width_for_right(hint_rect, right_width)
                          && left_width > max_left
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/reconnect_tests.rs b/codex-rs/tui/src/bottom_pane/chat_composer/reconnect_tests.rs
-index d1d7cd7bced7aae3b071e983860f1a3f52d76e6f..b400657e9563b1d416c156bbe965ccfc6fb359eb 100644
+index 66dc657c71d3b60efe85745dca250ea543bccbc6..165f0d82f8e82f054c2cc37243103d08e5a2f591 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/reconnect_tests.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/reconnect_tests.rs
 @@ -139,7 +139,6 @@ fn unavailable_thread_dispatches_recovery_and_local_commands() {
@@ -2436,10 +2812,10 @@ index e52d2bd1847a3d331f47ae0a5588b98c4552c839..c7aa9117dc2b824cb3684e6edcbbcd16
      );
  }
 diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
-index f75d17f57d54fa8ee756daf970fe54310e319627..0ba6b8ebd1390ef9f65ffd8cf904a0d09ce7f084 100644
+index 93a89e810f693bd38f88dd8960d05d85edc0e007..bff4edcc8c240f1212379f4a7774c2eb6dcea6eb 100644
 --- a/codex-rs/tui/src/bottom_pane/command_popup.rs
 +++ b/codex-rs/tui/src/bottom_pane/command_popup.rs
-@@ -299,6 +299,16 @@ impl CommandPopup {
+@@ -297,6 +297,16 @@ impl CommandPopup {
      }
  }
  
@@ -2457,10 +2833,10 @@ index f75d17f57d54fa8ee756daf970fe54310e319627..0ba6b8ebd1390ef9f65ffd8cf904a0d0
      pub(crate) fn command(&self) -> &str {
          match self {
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index c0e390289e8eda4c8ffd27eeaac705507107e158..583b6db397cc5900b0cc575ea708933895f221c2 100644
+index 5e4dee0ff5220ffbfcd92f88be3320ef2cd0e7d1..1276845e5c88bc5914989f45a6aae27a27b8db3b 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
-@@ -2377,6 +2377,18 @@ impl BottomPane {
+@@ -2591,6 +2591,18 @@ impl BottomPane {
          }
      }
  
@@ -2480,10 +2856,10 @@ index c0e390289e8eda4c8ffd27eeaac705507107e158..583b6db397cc5900b0cc575ea7089338
          if self.composer.set_luna_reserve_active(active) {
              self.request_redraw();
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa115d7cfe93 100644
+index 68868be0c7d48ee0fc1160863ffb39976ee8eb9d..ee9a6c838dcf099c4b26d0b4002b0eff1db0506f 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
-@@ -334,6 +334,10 @@ pub(crate) use self::permissions_menu::auto_review_available;
+@@ -339,6 +339,10 @@ pub(crate) use self::permissions_menu::auto_review_available;
  pub(crate) use self::permissions_menu::cyber_model_approval_reviewer;
  mod backend_banners;
  mod compaction;
@@ -2494,7 +2870,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
  mod luna_reserve_model;
  mod luna_reserve_return;
  mod security_setup;
-@@ -464,6 +468,7 @@ const DEFAULT_STATUS_LINE_ITEMS: [&str; 3] = ["model-with-reasoning", "current-d
+@@ -472,6 +476,7 @@ const DEFAULT_STATUS_LINE_ITEMS: [&str; 3] = ["model-with-reasoning", "current-d
  
  /// Common initialization parameters shared by all `ChatWidget` constructors.
  pub(crate) struct ChatWidgetInit {
@@ -2502,7 +2878,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
      pub(crate) config: Config,
      pub(crate) local_settings: crate::local_settings::LocalSettings,
      pub(crate) frame_requester: FrameRequester,
-@@ -513,6 +518,7 @@ pub(crate) enum ExternalEditorState {
+@@ -521,6 +526,7 @@ pub(crate) enum ExternalEditorState {
  /// (which view gets Ctrl+C), while `ChatWidget` owns process-level decisions such as interrupting
  /// active work, arming the double-press quit shortcut, and requesting shutdown-first exit.
  pub(crate) struct ChatWidget {
@@ -2510,7 +2886,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
      pub(crate) empty_state_animation:
          std::cell::RefCell<crate::empty_state_animation::EmptyStateAnimation>,
      pub(crate) daybreak_enabled: bool,
-@@ -721,6 +727,7 @@ pub(crate) struct ChatWidget {
+@@ -741,6 +747,7 @@ pub(crate) struct ChatWidget {
      session_network_proxy: Option<SessionNetworkProxyRuntime>,
      // Shared latch so we only warn once about invalid status-line item IDs.
      status_line_invalid_items_warned: Arc<AtomicBool>,
@@ -2518,7 +2894,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
      // Shared latch so we only warn once about invalid terminal-title item IDs.
      terminal_title_invalid_items_warned: Arc<AtomicBool>,
      // Last terminal title emitted, to avoid writing duplicate OSC updates.
-@@ -1115,6 +1122,7 @@ impl ChatWidget {
+@@ -1141,6 +1148,7 @@ impl ChatWidget {
                  self.bottom_pane
                      .set_context_window(/*percent*/ None, /*used_tokens*/ None);
                  self.token_info = None;
@@ -2526,7 +2902,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
              }
          }
      }
-@@ -1127,6 +1135,7 @@ impl ChatWidget {
+@@ -1153,6 +1161,7 @@ impl ChatWidget {
          let used_tokens = self.context_used_tokens(&info, percent.is_some());
          self.bottom_pane.set_context_window(percent, used_tokens);
          self.token_info = Some(info);
@@ -2534,7 +2910,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
      }
  
      fn context_remaining_percent(&self, info: &TokenUsageInfo) -> Option<i64> {
-@@ -1162,6 +1171,7 @@ impl ChatWidget {
+@@ -1188,6 +1197,7 @@ impl ChatWidget {
      }
  
      pub(crate) fn pre_draw_tick(&mut self) {
@@ -2542,7 +2918,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
          self.update_due_hook_visibility();
          self.schedule_hook_timer_if_needed();
          self.bottom_pane.pre_draw_tick();
-@@ -1497,13 +1507,21 @@ impl ChatWidget {
+@@ -1537,13 +1547,21 @@ impl ChatWidget {
      }
  
      /// Build a placeholder header cell while the session is configuring.
@@ -2565,7 +2941,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
              )
              .with_yolo_mode(history_cell::is_yolo_mode(config)),
          )
-@@ -1690,6 +1708,9 @@ impl ChatWidget {
+@@ -1730,6 +1748,9 @@ impl ChatWidget {
      pub(crate) fn on_terminal_resize(&mut self, width: u16) {
          let had_rendered_width = self.last_rendered_width.get().is_some();
          self.last_rendered_width.set(Some(width));
@@ -2575,7 +2951,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
          let stream_width = self.current_stream_width(/*reserved_cols*/ 2);
          let plan_stream_width = self.current_stream_width(/*reserved_cols*/ 4);
          if let Some(controller) = self.stream_controller.as_mut() {
-@@ -2048,6 +2069,8 @@ fn has_websocket_timing_metrics(summary: RuntimeMetricsSummary) -> bool {
+@@ -2092,6 +2113,8 @@ fn has_websocket_timing_metrics(summary: RuntimeMetricsSummary) -> bool {
  
  impl Drop for ChatWidget {
      fn drop(&mut self) {
@@ -2585,7 +2961,7 @@ index 7dbb54bb8576429ecaeba483a07095b194cba6a3..8e17c77eaa9e45e3fea8d7c5717afa11
              && let Some(thread_id) = self.thread_id
          {
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index dc5adf7b73980db446fd6e749120e50c63db2721..7983078ec3e90906cca817724b7548ebb86d0657 100644
+index 7b2d08c691ff0a798169ec230aaab16f03da1586..7afe8bb6b57b7f1035fedcd62210d32550c19474 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -12,6 +12,7 @@ impl ChatWidget {
@@ -2605,15 +2981,15 @@ index dc5adf7b73980db446fd6e749120e50c63db2721..7983078ec3e90906cca817724b7548eb
          let active_cell = Some(header);
  
          let current_cwd = Some(config.cwd.to_path_buf());
-@@ -96,6 +97,7 @@ impl ChatWidget {
-             pet_http_client.clone(),
+@@ -97,6 +98,7 @@ impl ChatWidget {
          );
+         let config_panel_tui = local_settings.tui.clone();
          let mut widget = Self {
 +            client_version,
              empty_state_animation: std::cell::RefCell::new(empty_state_animation),
              daybreak_enabled: false,
              app_event_tx: app_event_tx.clone(),
-@@ -259,6 +261,7 @@ impl ChatWidget {
+@@ -268,6 +270,7 @@ impl ChatWidget {
              instruction_source_paths: Vec::new(),
              session_network_proxy: None,
              status_line_invalid_items_warned,
@@ -2622,13 +2998,13 @@ index dc5adf7b73980db446fd6e749120e50c63db2721..7983078ec3e90906cca817724b7548eb
              last_terminal_title: None,
              last_terminal_title_requires_action: false,
 diff --git a/codex-rs/tui/src/chatwidget/protocol.rs b/codex-rs/tui/src/chatwidget/protocol.rs
-index 85ea551334db60d948a9b215e5026679a4fc723f..9350800c4e62d28d0b18a812fb300ed78aca815e 100644
+index be7da50c038199528746c0b2287fd225198cd1c0..6b298573242bf23a9cdb1c5a3b71e1105d472ba2 100644
 --- a/codex-rs/tui/src/chatwidget/protocol.rs
 +++ b/codex-rs/tui/src/chatwidget/protocol.rs
-@@ -87,6 +87,14 @@ impl ChatWidget {
-                 self.on_thread_settings_updated(notification);
-             }
-             ServerNotification::TurnStarted(notification) => {
+@@ -95,6 +95,14 @@ impl ChatWidget {
+                     self.on_modal_or_popup_closed();
+                 }
+                 self.safety_recourse = None;
 +                if replay_kind.is_none()
 +                    && notification.turn.status == TurnStatus::InProgress
 +                    && self
@@ -2640,7 +3016,7 @@ index 85ea551334db60d948a9b215e5026679a4fc723f..9350800c4e62d28d0b18a812fb300ed7
                  if from_replay {
                      self.restore_realtime_transcripts_before_turn(&notification.turn.id);
                  } else {
-@@ -198,6 +206,14 @@ impl ChatWidget {
+@@ -212,6 +220,14 @@ impl ChatWidget {
                  self.on_hook_completed(notification.run);
              }
              ServerNotification::Error(notification) => {
@@ -2655,7 +3031,7 @@ index 85ea551334db60d948a9b215e5026679a4fc723f..9350800c4e62d28d0b18a812fb300ed7
                  if notification.will_retry {
                      if !from_replay {
                          self.on_stream_error(
-@@ -418,6 +434,17 @@ impl ChatWidget {
+@@ -437,6 +453,17 @@ impl ChatWidget {
          notification: TurnCompletedNotification,
          replay_kind: Option<ReplayKind>,
      ) {
@@ -2673,8 +3049,8 @@ index 85ea551334db60d948a9b215e5026679a4fc723f..9350800c4e62d28d0b18a812fb300ed7
          // User-message dedupe only suppresses the app-server echo of a prompt
          // this TUI already rendered locally. Once that turn ends, another
          // client can submit the same text and it still needs its own user cell.
-@@ -582,6 +609,13 @@ impl ChatWidget {
-             ThreadItem::ContextCompaction { id }
+@@ -609,6 +636,13 @@ impl ChatWidget {
+             ThreadItemPayload::ContextCompaction { id }
                  if !matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages)) =>
              {
 +                if replay_kind.is_none()
@@ -2688,10 +3064,10 @@ index 85ea551334db60d948a9b215e5026679a4fc723f..9350800c4e62d28d0b18a812fb300ed7
                  let elapsed = if replay_kind == Some(ReplayKind::ThreadSnapshot) {
                      let elapsed_ms = chrono::Utc::now()
 diff --git a/codex-rs/tui/src/chatwidget/session_flow.rs b/codex-rs/tui/src/chatwidget/session_flow.rs
-index 97c7de5be321add6c92c50345fc19dea8c04dcb0..647659f982cb5200366a505bf7321009e853e7af 100644
+index a1ff412d4d50995912ed5b96cf02fcf1bee24ff5..a9f9a7a18eae675e2551ae22a2f7fcca0020e837 100644
 --- a/codex-rs/tui/src/chatwidget/session_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/session_flow.rs
-@@ -50,6 +50,7 @@ impl ChatWidget {
+@@ -71,6 +71,7 @@ impl ChatWidget {
          display: SessionConfiguredDisplay,
          fork_parent_title: Option<String>,
      ) {
@@ -2699,7 +3075,7 @@ index 97c7de5be321add6c92c50345fc19dea8c04dcb0..647659f982cb5200366a505bf7321009
          self.windows_sandbox_host =
              if !self.windows_sandbox_local_server && self.remote_connection.is_some() {
                  crate::app::WindowsSandboxHost::Remote
-@@ -217,6 +218,7 @@ impl ChatWidget {
+@@ -241,6 +242,7 @@ impl ChatWidget {
                  self.show_welcome_banner,
                  startup_tooltip_override,
                  self.plan_type,
@@ -2708,10 +3084,10 @@ index 97c7de5be321add6c92c50345fc19dea8c04dcb0..647659f982cb5200366a505bf7321009
              self.apply_session_info_cell(session_info_cell);
          } else if self
 diff --git a/codex-rs/tui/src/chatwidget/status_controls.rs b/codex-rs/tui/src/chatwidget/status_controls.rs
-index 6dc0ab9077d95c4c3b4df05065a509f7be34c54b..38facdbcfab0c74c8713c34d7337facc8871549f 100644
+index 046c55bc19b6ad1b256a33f408fa8876e3e0e488..0fa8a303ecac6159f376e97892188c144a72bdb3 100644
 --- a/codex-rs/tui/src/chatwidget/status_controls.rs
 +++ b/codex-rs/tui/src/chatwidget/status_controls.rs
-@@ -260,6 +260,7 @@ impl ChatWidget {
+@@ -267,6 +267,7 @@ impl ChatWidget {
              reasoning_effort_override,
              agents_summary,
              refreshing_rate_limits,
@@ -3331,10 +3707,10 @@ index 0000000000000000000000000000000000000000..210f600918ef8c8bc5afaa72b65fc88b
 +}
 diff --git a/codex-rs/tui/src/chatwidget/status_line_command_integration_tests.rs b/codex-rs/tui/src/chatwidget/status_line_command_integration_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3097c44ff5984a1e6247c7b99cdd52ccd2731469
+index 0000000000000000000000000000000000000000..3fada517f877eacb90aec9e2db4575d7fa090aeb
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/status_line_command_integration_tests.rs
-@@ -0,0 +1,1675 @@
+@@ -0,0 +1,1677 @@
 +//! Actual-widget behavioral contract. The initial inert glue must fail these
 +//! assertions before implementation; the existing scheduler is the only scheduler.
 +
@@ -3343,6 +3719,8 @@ index 0000000000000000000000000000000000000000..3097c44ff5984a1e6247c7b99cdd52cc
 +use crate::status_line_command::*;
 +use codex_app_server_protocol::ItemCompletedNotification;
 +use codex_app_server_protocol::ItemStartedNotification;
++use codex_app_server_protocol::ThreadItem;
++use codex_app_server_protocol::ThreadItemPayload;
 +use codex_app_server_protocol::TurnItemsView;
 +use codex_app_server_protocol::TurnStartedNotification;
 +use ratatui::buffer::Buffer;
@@ -3694,7 +4072,7 @@ index 0000000000000000000000000000000000000000..3097c44ff5984a1e6247c7b99cdd52cc
 +}
 +
 +fn compaction(chat: &mut ChatWidget, id: &str, completed: bool, replay: Option<ReplayKind>) {
-+    let item = ThreadItem::ContextCompaction { id: id.into() };
++    let item = ThreadItem::untimed(ThreadItemPayload::ContextCompaction { id: id.into() });
 +    let thread_id = chat.thread_id.unwrap().to_string();
 +    let event = if completed {
 +        ServerNotification::ItemCompleted(ItemCompletedNotification {
@@ -5011,10 +5389,10 @@ index 0000000000000000000000000000000000000000..3097c44ff5984a1e6247c7b99cdd52cc
 +    assert!(rendered.contains("v0.0.0"), "{rendered}");
 +}
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 46727cfc3210134991a4a8919c481b977a280554..47c02c4307e71055913c4d7a6e66624acb3a9825 100644
+index 997c3a2be6f3597815e5a876c5f9c3fd59fe87e1..803ca2cf1e25eeb4a0d49cc7e0c3301f6bae1592 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-@@ -200,8 +200,14 @@ impl ChatWidget {
+@@ -202,8 +202,14 @@ impl ChatWidget {
      }
  
      fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
@@ -5030,7 +5408,7 @@ index 46727cfc3210134991a4a8919c481b977a280554..47c02c4307e71055913c4d7a6e66624a
          if !enabled {
              self.set_status_line(/*status_line*/ None);
              self.set_status_line_hyperlink(/*url*/ None);
-@@ -292,6 +298,12 @@ impl ChatWidget {
+@@ -294,6 +300,12 @@ impl ChatWidget {
          }
      }
  
@@ -5043,7 +5421,7 @@ index 46727cfc3210134991a4a8919c481b977a280554..47c02c4307e71055913c4d7a6e66624a
      /// Recomputes both status surfaces from one shared config snapshot.
      ///
      /// This is the common refresh entrypoint for the footer status line and the
-@@ -307,6 +319,7 @@ impl ChatWidget {
+@@ -309,6 +321,7 @@ impl ChatWidget {
          self.sync_status_surface_shared_state(&selections);
          self.refresh_status_line_from_selections(&selections);
          self.refresh_terminal_title_from_selections(&selections);
@@ -5051,7 +5429,7 @@ index 46727cfc3210134991a4a8919c481b977a280554..47c02c4307e71055913c4d7a6e66624a
      }
  
      /// Recomputes and emits the terminal title from config and runtime state.
-@@ -491,7 +504,7 @@ impl ChatWidget {
+@@ -508,7 +521,7 @@ impl ChatWidget {
              })
      }
  
@@ -5061,10 +5439,10 @@ index 46727cfc3210134991a4a8919c481b977a280554..47c02c4307e71055913c4d7a6e66624a
              .as_deref()
              .unwrap_or(self.config.cwd.as_path())
 diff --git a/codex-rs/tui/src/chatwidget/tests/app_server.rs b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-index 8eeb1d24ce21d3375e4b2c590a5ea70d041144d1..e971aceae27e52dd697c835dd14e8e5f94f6944a 100644
+index c6dc2d4c6b4dc170b034d106af7569e4b9e37083..821474e15b7128df70d468f2dfc1def7e16152b3 100644
 --- a/codex-rs/tui/src/chatwidget/tests/app_server.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/app_server.rs
-@@ -95,7 +95,7 @@ async fn session_header_uses_catalog_display_name_without_changing_model() {
+@@ -96,7 +96,7 @@ async fn session_header_uses_catalog_display_name_without_changing_model() {
              .iter()
              .map(|lines| lines_to_single_string(lines))
              .collect::<String>()
@@ -5074,10 +5452,10 @@ index 8eeb1d24ce21d3375e4b2c590a5ea70d041144d1..e971aceae27e52dd697c835dd14e8e5f
          assert_chatwidget_snapshot!(format!("catalog_model_session_header_{name}"), rendered);
          assert_eq!(chat.current_model(), slug);
 diff --git a/codex-rs/tui/src/chatwidget/tests/helpers.rs b/codex-rs/tui/src/chatwidget/tests/helpers.rs
-index 1db139d7311ce97dd2b91f85ee33c63d6e90583c..495de1b3649c31c64ad7213d5259193a0c998a3a 100644
+index 3ac0a5b8114bb5ee033209735f158bbbeffbbee3..e1f944a0a9a1c00cb1970d70b508ff5654185e28 100644
 --- a/codex-rs/tui/src/chatwidget/tests/helpers.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/helpers.rs
-@@ -229,6 +229,7 @@ pub(super) async fn make_chatwidget_manual_with_auth(
+@@ -231,6 +231,7 @@ pub(super) async fn make_chatwidget_manual_with_auth(
      let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
      let model_catalog = test_model_catalog(&cfg);
      let common = ChatWidgetInit {
@@ -5085,11 +5463,24 @@ index 1db139d7311ce97dd2b91f85ee33c63d6e90583c..495de1b3649c31c64ad7213d5259193a
          requires_openai_auth: cfg.model_provider.requires_openai_auth,
          local_settings: crate::local_settings::LocalSettings::from(&cfg),
          config: cfg,
+diff --git a/codex-rs/tui/src/chatwidget/tests/history_replay.rs b/codex-rs/tui/src/chatwidget/tests/history_replay.rs
+index 434aaa19cf819a771e41301afa6a081cb208d3c3..8844d433aab9006023b2e0802c14aa38c2ae211e 100644
+--- a/codex-rs/tui/src/chatwidget/tests/history_replay.rs
++++ b/codex-rs/tui/src/chatwidget/tests/history_replay.rs
+@@ -118,7 +118,7 @@ async fn resumed_initial_messages_render_history() {
+         .map(ToString::to_string)
+         .collect::<Vec<_>>()
+         .join("\n")
+-        .replace(CODEX_CLI_VERSION, "<VERSION>")
++        .replace(chat.client_version, "<VERSION>")
+         .replace(
+             &test_path_display("/home/user/project"),
+             "/home/user/project",
 diff --git a/codex-rs/tui/src/chatwidget/tests/plan_mode.rs b/codex-rs/tui/src/chatwidget/tests/plan_mode.rs
-index 2b3257073cdac1a9d6ec3bcb451c46bee5c79ba1..233383e246a7696cf2e9f755e0e21bef399f4e99 100644
+index 5b9ded0f4b5eb769dc96d85a128cb38c8b26e62f..6cef3ba55fc1e9202925538bb687239c0e77d0e9 100644
 --- a/codex-rs/tui/src/chatwidget/tests/plan_mode.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/plan_mode.rs
-@@ -1617,6 +1617,7 @@ async fn make_startup_chat_with_cli_overrides(
+@@ -1612,6 +1612,7 @@ async fn make_startup_chat_with_cli_overrides(
      let resolved_model = get_model_offline_for_tests(cfg.model.as_deref());
      let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
      let init = ChatWidgetInit {
@@ -5098,7 +5489,7 @@ index 2b3257073cdac1a9d6ec3bcb451c46bee5c79ba1..233383e246a7696cf2e9f755e0e21bef
          local_settings: crate::local_settings::LocalSettings::from(&cfg),
          config: cfg.clone(),
 diff --git a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
-index 4018a2539627427fb43f2dd0925168b3db1f5de2..a97e247b11ff595ddab038a15dc06154bf3799f0 100644
+index 54e1f1fc67cc518cbbb7350725d1d234670f989c..bd75e72eface2f895e650af3114004fe8fe3308c 100644
 --- a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
 @@ -35,6 +35,7 @@ async fn experimental_mode_plan_is_ignored_on_startup() {
@@ -5110,10 +5501,10 @@ index 4018a2539627427fb43f2dd0925168b3db1f5de2..a97e247b11ff595ddab038a15dc06154
          local_settings: crate::local_settings::LocalSettings::from(&cfg),
          config: cfg.clone(),
 diff --git a/codex-rs/tui/src/chatwidget/tests/slash_commands.rs b/codex-rs/tui/src/chatwidget/tests/slash_commands.rs
-index fbf476c9ab84f4ffd8ceca80cecd23b1238bde53..157017b0beb0f62e0802998ce6208125b47921fd 100644
+index e68d202b007614de41c22a49b88014626ae2b0f2..1e09661828db75a0456b20e18e7fdfb315915008 100644
 --- a/codex-rs/tui/src/chatwidget/tests/slash_commands.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/slash_commands.rs
-@@ -1859,7 +1859,7 @@ async fn slash_copy_picker_copies_status_fields_and_preserves_source_after_copyi
+@@ -1873,7 +1873,7 @@ async fn slash_copy_picker_copies_status_fields_and_preserves_source_after_copyi
          "slash_copy_picker_status_fields",
          render_bottom_popup(&chat, /*width*/ 100)
              .replace(&directory, "[[workspace]]")
@@ -5122,7 +5513,7 @@ index fbf476c9ab84f4ffd8ceca80cecd23b1238bde53..157017b0beb0f62e0802998ce6208125
      );
      chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
      let (whole_status, label) = next_copy_selection(&mut rx);
-@@ -1868,7 +1868,7 @@ async fn slash_copy_picker_copies_status_fields_and_preserves_source_after_copyi
+@@ -1882,7 +1882,7 @@ async fn slash_copy_picker_copies_status_fields_and_preserves_source_after_copyi
          "slash_copy_whole_status",
          whole_status
              .replace(&directory, "[[workspace]]")
@@ -5132,10 +5523,10 @@ index fbf476c9ab84f4ffd8ceca80cecd23b1238bde53..157017b0beb0f62e0802998ce6208125
      let expected = [
          ("Whole status", whole_status.as_str()),
 diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
-index 307e1f5128c68d47088bf0e2c784f62d29fd7755..90e364b0d7947de4b8ebf6a64325052ee72b4a98 100644
+index 9074c5ec03e369c7a54529f3e67eee95f09ef49b..89a1b6c74ccda55a77e438e639c8ce1c27f1f41e 100644
 --- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
 +++ b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
-@@ -581,6 +581,7 @@ async fn configured_pet_load_is_deferred_until_after_construction() {
+@@ -635,6 +635,7 @@ async fn configured_pet_load_is_deferred_until_after_construction() {
      let resolved_model = get_model_offline_for_tests(cfg.model.as_deref());
      let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
      let init = ChatWidgetInit {
@@ -5144,10 +5535,10 @@ index 307e1f5128c68d47088bf0e2c784f62d29fd7755..90e364b0d7947de4b8ebf6a64325052e
          local_settings: crate::local_settings::LocalSettings::from(&cfg),
          config: cfg.clone(),
 diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
-index 60081516bdf8c17a5dbe15e7c74bf1ec8e77da5a..5c56f5974b99280161d93da8ca7e415d59606c47 100644
+index 0607a8ca6aa1f90755952223a2ac0d83f3dd9b4c..cc1ade44af1aacb498708018afc7e76c6a74a8e5 100644
 --- a/codex-rs/tui/src/custom_terminal.rs
 +++ b/codex-rs/tui/src/custom_terminal.rs
-@@ -251,6 +251,12 @@ where
+@@ -254,6 +254,12 @@ where
          terminal
      }
  
@@ -5160,7 +5551,7 @@ index 60081516bdf8c17a5dbe15e7c74bf1ec8e77da5a..5c56f5974b99280161d93da8ca7e415d
      /// Get a Frame object which provides a consistent view into the terminal state for rendering.
      pub fn get_frame(&mut self) -> Frame<'_> {
          Frame {
-@@ -312,6 +318,10 @@ where
+@@ -316,6 +322,10 @@ where
      /// of the screen.
      pub fn resize(&mut self, screen_size: Size) -> io::Result<()> {
          self.last_known_screen_size = screen_size;
@@ -5172,7 +5563,7 @@ index 60081516bdf8c17a5dbe15e7c74bf1ec8e77da5a..5c56f5974b99280161d93da8ca7e415d
      }
  
 diff --git a/codex-rs/tui/src/history_cell/notices.rs b/codex-rs/tui/src/history_cell/notices.rs
-index 06d7b2f13a544f3e4b7bc83f57ecdd103b060c3b..2108bdfaea436237fc9adc06afb0f9904d938ffa 100644
+index 9f5e2137f0ecb1b70c7a17b3ed14659d5b308b7a..5454b40643ad93c67dcd043e15e7f875303cdf7c 100644
 --- a/codex-rs/tui/src/history_cell/notices.rs
 +++ b/codex-rs/tui/src/history_cell/notices.rs
 @@ -12,18 +12,28 @@ const RECAP_HEADING: &str = "Conversation recap";
@@ -5227,10 +5618,10 @@ index 06d7b2f13a544f3e4b7bc83f57ecdd103b060c3b..2108bdfaea436237fc9adc06afb0f990
              Line::from(""),
              Line::from("See full release notes:"),
 diff --git a/codex-rs/tui/src/history_cell/session.rs b/codex-rs/tui/src/history_cell/session.rs
-index 48295d4b85ce51d6dc048c7942127c9c947c9987..f370d28ec97cb25403330be7ef5d5d177e48913f 100644
+index 237ef9ec9699bc895011750b749aa6edcc1dae11..43ea173731b2b549270d00466891d6a4f4c0c8c2 100644
 --- a/codex-rs/tui/src/history_cell/session.rs
 +++ b/codex-rs/tui/src/history_cell/session.rs
-@@ -178,13 +178,14 @@ pub(crate) fn new_session_info(
+@@ -199,13 +199,14 @@ pub(crate) fn new_session_info(
      is_first_event: bool,
      tooltip_override: Option<String>,
      auth_plan: Option<PlanType>,
@@ -5247,10 +5638,10 @@ index 48295d4b85ce51d6dc048c7942127c9c947c9987..f370d28ec97cb25403330be7ef5d5d17
      .with_yolo_mode(has_yolo_permissions(
          session.approval_policy,
 diff --git a/codex-rs/tui/src/history_cell/tests.rs b/codex-rs/tui/src/history_cell/tests.rs
-index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce020abb85af 100644
+index cc7f2f668c054576111254d561e5d64104a86ddc..121eee8f8682175534cc2faea7fc2307f3e9220e 100644
 --- a/codex-rs/tui/src/history_cell/tests.rs
 +++ b/codex-rs/tui/src/history_cell/tests.rs
-@@ -747,6 +747,7 @@ async fn session_info_uses_availability_nux_tooltip_override() {
+@@ -745,6 +745,7 @@ async fn session_info_uses_availability_nux_tooltip_override() {
          /*is_first_event*/ false,
          Some("Model just became available".to_string()),
          Some(PlanType::Free),
@@ -5258,7 +5649,7 @@ index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce02
      );
  
      let rendered = render_transcript(&cell).join("\n");
-@@ -770,6 +771,7 @@ async fn session_info_availability_nux_tooltip_snapshot() {
+@@ -768,6 +769,7 @@ async fn session_info_availability_nux_tooltip_snapshot() {
          /*is_first_event*/ false,
          Some("Model just became available".to_string()),
          Some(PlanType::Free),
@@ -5266,7 +5657,7 @@ index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce02
      );
  
      let rendered = render_transcript(&cell).join("\n");
-@@ -791,6 +793,7 @@ async fn session_info_preserves_styled_tooltip_links() {
+@@ -789,6 +791,7 @@ async fn session_info_preserves_styled_tooltip_links() {
                  .to_string(),
          ),
          Some(PlanType::Free),
@@ -5274,7 +5665,7 @@ index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce02
      );
  
      let lines = cell.transcript_hyperlink_lines(/*width*/ 30);
-@@ -840,6 +843,7 @@ async fn session_info_first_event_suppresses_tooltips_and_nux() {
+@@ -838,6 +841,7 @@ async fn session_info_first_event_suppresses_tooltips_and_nux() {
          /*is_first_event*/ true,
          Some("Model just became available".to_string()),
          Some(PlanType::Free),
@@ -5282,7 +5673,7 @@ index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce02
      );
  
      let rendered = render_transcript(&cell).join("\n");
-@@ -860,6 +864,7 @@ async fn session_info_hides_tooltips_when_disabled() {
+@@ -858,6 +862,7 @@ async fn session_info_hides_tooltips_when_disabled() {
          /*is_first_event*/ false,
          Some("Model just became available".to_string()),
          Some(PlanType::Free),
@@ -5290,7 +5681,7 @@ index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce02
      );
  
      let rendered = render_transcript(&cell).join("\n");
-@@ -1372,8 +1377,11 @@ fn web_search_history_cell_snapshot() {
+@@ -1374,8 +1379,11 @@ fn web_search_history_cell_snapshot() {
  
  #[test]
  fn standalone_unix_update_available_history_cell_snapshot() {
@@ -5304,7 +5695,7 @@ index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce02
      let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
  
      insta::assert_snapshot!(rendered);
-@@ -1381,8 +1389,11 @@ fn standalone_unix_update_available_history_cell_snapshot() {
+@@ -1383,8 +1391,11 @@ fn standalone_unix_update_available_history_cell_snapshot() {
  
  #[test]
  fn standalone_windows_update_available_history_cell_snapshot() {
@@ -5318,7 +5709,7 @@ index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce02
      let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
  
      insta::assert_snapshot!(rendered);
-@@ -1390,8 +1401,11 @@ fn standalone_windows_update_available_history_cell_snapshot() {
+@@ -1392,8 +1403,11 @@ fn standalone_windows_update_available_history_cell_snapshot() {
  
  #[test]
  fn pnpm_update_available_history_cell_snapshot() {
@@ -5332,7 +5723,7 @@ index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce02
      let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
  
      insta::assert_snapshot!(rendered);
-@@ -3210,3 +3224,19 @@ fn consolidation_walker_replaces_agent_message_cells() {
+@@ -3224,3 +3238,19 @@ fn consolidation_walker_replaces_agent_message_cells() {
          "second cell should be AgentMarkdownCell"
      );
  }
@@ -5353,19 +5744,21 @@ index ea59afbbe784ceb4ecb7a8bad3d8bb1c7d2b27ba..d49cd6df189acdff8ed84d24a44bce02
 +    assert!(rendered.contains("7.8.9 -> 9.9.9"), "{rendered}");
 +}
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index dc0fbd0547e3655a42f33d7559763c0da6e1b44d..74d20779ef73adbea9406f2d958ea5b581b7afcb 100644
+index 1b0b08cb3a87b088fa21b61ef8fbb3626b93f114..215e330a10f2d7b4a85ce4720a68c42becc023eb 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
-@@ -213,6 +213,7 @@ mod startup_preflight;
+@@ -220,6 +220,9 @@ mod startup_preflight;
  mod startup_presentation;
  mod startup_recovery;
  mod status;
 +mod status_line_command;
++mod status_line_command_smoke;
++pub use status_line_command_smoke::run_codexs_smoke;
  mod status_indicator_widget;
  mod streaming;
  mod style;
 diff --git a/codex-rs/tui/src/local_settings.rs b/codex-rs/tui/src/local_settings.rs
-index 9529ba092fabdf38a793149dcb0d28d02ca539c2..ed99f2d4652f49f2f078af2619a07d45770dc275 100644
+index 1d0d7eb84b86a5a166f7d73d6e3c81bbc0bd9d67..f76b7acc3a1da271046c4699e92480b05859bf79 100644
 --- a/codex-rs/tui/src/local_settings.rs
 +++ b/codex-rs/tui/src/local_settings.rs
 @@ -12,6 +12,7 @@ use crate::legacy_core::config::ConfigTomlLoadResult;
@@ -5384,7 +5777,7 @@ index 9529ba092fabdf38a793149dcb0d28d02ca539c2..ed99f2d4652f49f2f078af2619a07d45
      pub(crate) tui: Tui,
      pub(crate) transcript_mode: TranscriptMode,
      pub(crate) history: History,
-@@ -50,6 +52,7 @@ impl LocalSettings {
+@@ -51,6 +53,7 @@ impl LocalSettings {
      ) -> Self {
          let mut settings = Self {
              audio: Ok(Default::default()),
@@ -5392,7 +5785,7 @@ index 9529ba092fabdf38a793149dcb0d28d02ca539c2..ed99f2d4652f49f2f078af2619a07d45
              transcript_mode: TranscriptMode::resolve(
                  config.tui_fullscreen_transcript,
                  config.tui_alternate_screen != codex_config::types::AltScreenMode::Never,
-@@ -125,6 +128,7 @@ impl LocalSettings {
+@@ -129,6 +132,7 @@ impl LocalSettings {
          tui.screen_reader_detection_done = None;
          let mut settings = Self {
              audio: Ok(Default::default()),
@@ -5400,7 +5793,7 @@ index 9529ba092fabdf38a793149dcb0d28d02ca539c2..ed99f2d4652f49f2f078af2619a07d45
              transcript_mode: TranscriptMode::resolve(
                  tui.fullscreen_transcript,
                  tui.alternate_screen != codex_config::types::AltScreenMode::Never,
-@@ -173,6 +177,7 @@ impl LocalSettings {
+@@ -178,6 +182,7 @@ impl LocalSettings {
          self.audio = audio
              .try_into()
              .map_err(|error: toml::de::Error| format!("Invalid machine audio settings: {error}"));
@@ -5423,7 +5816,7 @@ index c9e1dab58ee3fcc40330d6525a8abcb0d78d0f20..db20b21166d6035f3a6d847834cf6d2f
  }
  
 diff --git a/codex-rs/tui/src/startup_draft_tests.rs b/codex-rs/tui/src/startup_draft_tests.rs
-index 2cb7703f409b4da2e64fd22e2b2ee715ed426e98..3b3645bfeaee476e830a64ef278c40e1a6d9ad5a 100644
+index 5e977f15a4d9d3a1d73205c2ab327016868888d9..e6e5f34fb024900c683128f14645f44914dbf504 100644
 --- a/codex-rs/tui/src/startup_draft_tests.rs
 +++ b/codex-rs/tui/src/startup_draft_tests.rs
 @@ -23,6 +23,20 @@ use crate::resume_picker::SessionSelection;
@@ -5494,7 +5887,7 @@ index 2cb7703f409b4da2e64fd22e2b2ee715ed426e98..3b3645bfeaee476e830a64ef278c40e1
      };
  
      for (label, initial_screen, session_action) in [
-@@ -797,7 +809,7 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
+@@ -803,7 +815,7 @@ async fn startup_draft_waits_for_onboarding_before_accepting_input() {
          })
          .collect::<Vec<_>>()
          .join("\n")
@@ -5503,7 +5896,7 @@ index 2cb7703f409b4da2e64fd22e2b2ee715ed426e98..3b3645bfeaee476e830a64ef278c40e1
      drop(renderable);
      frames.push_str(&format!("\n---\nafter onboarding:\n{visible_frame}"));
      insta::assert_snapshot!("startup_draft_onboarding_transition", frames);
-@@ -923,3 +935,14 @@ async fn startup_draft_preserves_large_pastes_without_attaching_images() {
+@@ -929,3 +941,14 @@ async fn startup_draft_preserves_large_pastes_without_attaching_images() {
      assert_eq!(draft.cursor, draft.text.len());
      assert!(draft.local_images.is_empty());
  }
@@ -5519,7 +5912,7 @@ index 2cb7703f409b4da2e64fd22e2b2ee715ed426e98..3b3645bfeaee476e830a64ef278c40e1
 +    assert!(rendered.contains(env!("CARGO_PKG_VERSION")), "{rendered}");
 +}
 diff --git a/codex-rs/tui/src/status/card.rs b/codex-rs/tui/src/status/card.rs
-index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..de773251002c25d315a42fa7a70d2f261e351b9a 100644
+index 8145011fd13b386e5a1a455935f2d3f423382318..9cc48f34d2dab3f8497f2df3ac336dd4511eb7fc 100644
 --- a/codex-rs/tui/src/status/card.rs
 +++ b/codex-rs/tui/src/status/card.rs
 @@ -7,7 +7,6 @@ use crate::line_truncation::line_width;
@@ -5530,7 +5923,7 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..de773251002c25d315a42fa7a70d2f26
  use chrono::DateTime;
  use chrono::Local;
  use codex_app_server_protocol::AskForApproval;
-@@ -124,6 +123,7 @@ impl StatusHistoryHandle {
+@@ -126,6 +125,7 @@ impl StatusHistoryHandle {
  
  #[derive(Debug)]
  struct StatusHistoryCell {
@@ -5538,7 +5931,7 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..de773251002c25d315a42fa7a70d2f26
      model_name: String,
      model_details: Vec<String>,
      directory: PathBuf,
-@@ -215,6 +215,7 @@ pub(crate) fn new_status_output_with_rate_limits(
+@@ -218,6 +218,7 @@ pub(crate) fn new_status_output_with_rate_limits(
          reasoning_effort_override,
          "<none>".to_string(),
          refreshing_rate_limits,
@@ -5546,7 +5939,7 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..de773251002c25d315a42fa7a70d2f26
      )
      .0
  }
-@@ -239,6 +240,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
+@@ -242,6 +243,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
      reasoning_effort_override: Option<Option<ReasoningEffort>>,
      agents_summary: String,
      refreshing_rate_limits: bool,
@@ -5554,7 +5947,7 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..de773251002c25d315a42fa7a70d2f26
  ) -> (CompositeHistoryCell, StatusHistoryHandle) {
      let command = PlainHistoryCell::new(vec!["/status".magenta().into()]);
      let card = Arc::new(StatusHistoryCell::new(
-@@ -260,6 +262,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
+@@ -263,6 +265,7 @@ pub(crate) fn new_status_output_with_rate_limits_handle(
          reasoning_effort_override,
          agents_summary,
          refreshing_rate_limits,
@@ -5562,7 +5955,7 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..de773251002c25d315a42fa7a70d2f26
      ));
      let handle = StatusHistoryHandle {
          card: Arc::clone(&card),
-@@ -292,6 +295,7 @@ impl StatusHistoryCell {
+@@ -295,6 +298,7 @@ impl StatusHistoryCell {
          reasoning_effort_override: Option<Option<ReasoningEffort>>,
          agents_summary: String,
          refreshing_rate_limits: bool,
@@ -5570,7 +5963,7 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..de773251002c25d315a42fa7a70d2f26
      ) -> Self {
          let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
          let permission_profile = config.permissions.effective_permission_profile();
-@@ -383,6 +387,7 @@ impl StatusHistoryCell {
+@@ -406,6 +410,7 @@ impl StatusHistoryCell {
          let thread_usage = StatusThreadUsage::default();
  
          Self {
@@ -5578,7 +5971,7 @@ index 65ef9f651d7e71ea94f8b9e135226818cdda5c5b..de773251002c25d315a42fa7a70d2f26
              model_name,
              model_details,
              directory: config.cwd.to_path_buf(),
-@@ -875,7 +880,7 @@ impl StatusHistoryCell {
+@@ -912,7 +917,7 @@ impl StatusHistoryCell {
              ""
          };
          let mut title = vec![indent.into()];
@@ -5631,7 +6024,7 @@ index c22868b62115a73827250f8b30b1f193474a4098..0e26f1b55c69cfc5426ed55c84018516
              }),
              credits: None,
 diff --git a/codex-rs/tui/src/status/tests.rs b/codex-rs/tui/src/status/tests.rs
-index c6e33d8fc89072d0a3a293e070da0194d4fbc527..42d4b4edea43135a0c6a33bec6b42a9ce8eac576 100644
+index c51f429dfa62c6b669be4634b24e731fbeb52bb9..a5a06e1898bc6f3562acde6f657bdc936204843d 100644
 --- a/codex-rs/tui/src/status/tests.rs
 +++ b/codex-rs/tui/src/status/tests.rs
 @@ -70,6 +70,7 @@ fn stale_monthly_limit_marks_fresh_rolling_snapshot_stale() {
@@ -5642,7 +6035,7 @@ index c6e33d8fc89072d0a3a293e070da0194d4fbc527..42d4b4edea43135a0c6a33bec6b42a9c
              window_minutes: Some(300),
          }),
          secondary: None,
-@@ -792,6 +793,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
+@@ -810,6 +811,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
          /*reasoning_effort_override*/ None,
          "<none>".to_string(),
          /*refreshing_rate_limits*/ false,
@@ -5650,7 +6043,7 @@ index c6e33d8fc89072d0a3a293e070da0194d4fbc527..42d4b4edea43135a0c6a33bec6b42a9c
      );
      let rendered =
          sanitize_directory(render_lines(&composite.display_lines(/*width*/ 120))).join("\n");
-@@ -823,6 +825,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
+@@ -841,6 +843,7 @@ async fn status_uses_server_provider_id_and_auth_requirement() {
          /*reasoning_effort_override*/ None,
          "<none>".to_string(),
          /*refreshing_rate_limits*/ false,
@@ -5658,7 +6051,7 @@ index c6e33d8fc89072d0a3a293e070da0194d4fbc527..42d4b4edea43135a0c6a33bec6b42a9c
      );
      let rendered =
          sanitize_directory(render_lines(&composite.display_lines(/*width*/ 120))).join("\n");
-@@ -1513,6 +1516,7 @@ async fn status_wraps_long_paths_and_session_ids_without_losing_text() {
+@@ -1531,6 +1534,7 @@ async fn status_wraps_long_paths_and_session_ids_without_losing_text() {
          /*reasoning_effort_override*/ None,
          "<none>".to_string(),
          /*refreshing_rate_limits*/ false,
@@ -5666,7 +6059,7 @@ index c6e33d8fc89072d0a3a293e070da0194d4fbc527..42d4b4edea43135a0c6a33bec6b42a9c
      );
      let directory = directory.to_string_lossy();
      for width in [7, 12, 17, 18, 24, 25, 40, 80] {
-@@ -1751,6 +1755,7 @@ async fn status_snapshot_uses_default_reasoning_when_config_empty() {
+@@ -1771,6 +1775,7 @@ async fn status_snapshot_uses_default_reasoning_when_config_empty() {
              /*reasoning_effort_override*/ Some(Some(ReasoningEffort::Medium)),
              "<none>".to_string(),
              /*refreshing_rate_limits*/ false,
@@ -5674,7 +6067,7 @@ index c6e33d8fc89072d0a3a293e070da0194d4fbc527..42d4b4edea43135a0c6a33bec6b42a9c
          );
          let mut rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
          if cfg!(windows) {
-@@ -1863,6 +1868,7 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
+@@ -1883,6 +1888,7 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
          /*reasoning_effort_override*/ None,
          "<none>".to_string(),
          /*refreshing_rate_limits*/ true,
@@ -5682,7 +6075,7 @@ index c6e33d8fc89072d0a3a293e070da0194d4fbc527..42d4b4edea43135a0c6a33bec6b42a9c
      );
      let mut overlay =
          TranscriptOverlay::new(vec![Arc::new(status)], RuntimeKeymap::defaults().pager);
-@@ -1881,11 +1887,13 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
+@@ -1901,11 +1907,13 @@ async fn transcript_overlay_remeasures_status_after_rate_limit_refresh() {
              primary: Some(RateLimitWindowDisplay {
                  used_percent: 45.0,
                  resets_at: Some("soon".to_string()),
@@ -5696,7 +6089,7 @@ index c6e33d8fc89072d0a3a293e070da0194d4fbc527..42d4b4edea43135a0c6a33bec6b42a9c
                  window_minutes: Some(10_080),
              }),
              credits: None,
-@@ -2387,3 +2395,155 @@ fn reset_timestamps_follow_clock_preference() {
+@@ -2408,3 +2416,155 @@ fn reset_timestamps_follow_clock_preference() {
      00:00 on 22 Sep
      ");
  }
@@ -7797,6 +8190,466 @@ index 0000000000000000000000000000000000000000..a01617d152585cd1cc6b11fb7f92e702
 +#[cfg(test)]
 +#[path = "status_line_command_tests.rs"]
 +mod tests;
+diff --git a/codex-rs/tui/src/status_line_command_smoke.rs b/codex-rs/tui/src/status_line_command_smoke.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..b17abf2b7d904eae8f1e14e7362218535802f621
+--- /dev/null
++++ b/codex-rs/tui/src/status_line_command_smoke.rs
+@@ -0,0 +1,454 @@
++use std::path::PathBuf;
++
++/// Exercise the real footer runner with owned synthetic settings, without normal CLI startup.
++pub async fn run_codexs_smoke(node: PathBuf, formatter: PathBuf) -> color_eyre::Result<()> {
++    #[cfg(windows)]
++    {
++        use std::time::Duration;
++
++        if !node.is_absolute() || !formatter.is_absolute() || !node.is_file() || !formatter.is_file() {
++            color_eyre::eyre::bail!("SMOKE_ARGS");
++        }
++        // Reserve the runner's five-second cleanup and two-second drop fallback inside ten seconds.
++        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
++        supervise_probe(node, formatter, tokio::time::sleep_until(deadline)).await
++    }
++    #[cfg(not(windows))]
++    {
++        let _ = (node, formatter);
++        color_eyre::eyre::bail!("SMOKE_UNSUPPORTED")
++    }
++}
++
++#[cfg(windows)]
++async fn supervise_probe(
++    node: PathBuf,
++    formatter: PathBuf,
++    deadline: impl std::future::Future<Output = ()>,
++) -> color_eyre::Result<()> {
++    let (cancel, cancellation) = tokio::sync::oneshot::channel();
++    // Dropping this caller also closes cancellation. The supervisor keeps the owned directory
++    // until runner cleanup finishes; a deadline must await it before the CLI drops its runtime.
++    let mut supervisor = tokio::spawn(run_probe(node, formatter, cancellation));
++    tokio::pin!(deadline);
++    tokio::select! {
++        biased;
++        _ = &mut deadline => {
++            let _ = cancel.send(());
++            let result = supervisor.await
++                .map_err(|_| color_eyre::eyre::eyre!("SMOKE_RUNNER"))?;
++            if let Err(error) = result
++                && error.to_string() == "SMOKE_CLEANUP"
++            {
++                return Err(error);
++            }
++            color_eyre::eyre::bail!("SMOKE_TIMEOUT")
++        }
++        result = &mut supervisor => {
++            result.map_err(|_| color_eyre::eyre::eyre!("SMOKE_RUNNER"))?
++        }
++    }
++}
++
++#[cfg(windows)]
++async fn run_probe(
++    node: PathBuf,
++    formatter: PathBuf,
++    mut cancellation: tokio::sync::oneshot::Receiver<()>,
++) -> color_eyre::Result<()> {
++    use crate::status_line_command::StatusLineCommandConfig;
++    use crate::status_line_command::StatusLineCommandError;
++    use crate::status_line_command::StatusLineCommandRequest;
++    use crate::status_line_command::run_status_line_command;
++    use base64::Engine;
++    use base64::engine::general_purpose::STANDARD;
++
++    fn encoded_path(path: &std::path::Path) -> color_eyre::Result<String> {
++        let text = path
++            .to_str()
++            .ok_or_else(|| color_eyre::eyre::eyre!("SMOKE_ARGS"))?;
++        let bytes: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
++        Ok(STANDARD.encode(bytes))
++    }
++
++    let root = tempfile::Builder::new()
++        .prefix("codexs-smoke-")
++        .tempdir()
++        .map_err(|_| color_eyre::eyre::eyre!("SMOKE_IO"))?;
++    let settings = root.path().join("settings.json");
++    std::fs::write(
++        &settings,
++        br#"{"version":4,"lines":[[{"id":"smoke","type":"custom-text","customText":"codexs-smoke-ok"}]],"colorLevel":0,"defaultPadding":""}"#,
++    )
++    .map_err(|_| color_eyre::eyre::eyre!("SMOKE_IO"))?;
++
++    let system_root = std::env::var_os("SystemRoot")
++        .map(PathBuf::from)
++        .ok_or_else(|| color_eyre::eyre::eyre!("SMOKE_ENV"))?;
++    let powershell = system_root.join("System32/WindowsPowerShell/v1.0/powershell.exe");
++    let shell_text = powershell
++        .to_str()
++        .ok_or_else(|| color_eyre::eyre::eyre!("SMOKE_ENV"))?;
++    // Only the OS executable is command syntax. All caller/temporary paths travel as encoded data.
++    if !powershell.is_absolute()
++        || !powershell.is_file()
++        || shell_text.contains(['"', '%', '!', '&', '|', '<', '>', '^', '\r', '\n'])
++    {
++        color_eyre::eyre::bail!("SMOKE_ENV");
++    }
++    let script = format!(
++        r#"$ErrorActionPreference = 'Stop'
++$ProgressPreference = 'SilentlyContinue'
++function Decode([string]$value) {{ [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($value)) }}
++$node = Decode '{}'
++$formatter = Decode '{}'
++$settings = Decode '{}'
++$owned = Decode '{}'
++$system = Decode '{}'
++foreach ($key in @([Environment]::GetEnvironmentVariables('Process').Keys)) {{
++    [Environment]::SetEnvironmentVariable([string]$key, $null, 'Process')
++}}
++foreach ($key in @('SystemRoot','WINDIR')) {{ [Environment]::SetEnvironmentVariable($key, $system, 'Process') }}
++$env:COMSPEC = [IO.Path]::Combine($system, 'System32\cmd.exe')
++$env:PATH = [IO.Path]::Combine($system, 'System32')
++$env:PATHEXT = '.EXE;.COM'
++foreach ($key in @('CODEX_HOME','HOME','USERPROFILE','TEMP','TMP','APPDATA','LOCALAPPDATA')) {{
++    [Environment]::SetEnvironmentVariable($key, $owned, 'Process')
++}}
++$env:CCSTATUSLINE_WIDTH = '80'
++$utf8 = [Text.UTF8Encoding]::new($false)
++[Console]::InputEncoding = $utf8
++[Console]::OutputEncoding = $utf8
++$OutputEncoding = $utf8
++$payload = [Console]::In.ReadToEnd()
++$arguments = @($formatter, '--config', $settings)
++$payload | & $node @arguments
++exit $LASTEXITCODE
++"#,
++        encoded_path(&node)?,
++        encoded_path(&formatter)?,
++        encoded_path(&settings)?,
++        encoded_path(root.path())?,
++        encoded_path(&system_root)?,
++    );
++    let script_path = root.path().join("probe.ps1");
++    std::fs::write(&script_path, script)
++        .map_err(|_| color_eyre::eyre::eyre!("SMOKE_IO"))?;
++    // Keep the cmd.exe command below its length limit even when the supplied paths are long.
++    let bootstrap = format!(
++        "& ([scriptblock]::Create([IO.File]::ReadAllText([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{}')))))",
++        encoded_path(&script_path)?
++    );
++    let bytes: Vec<u8> = bootstrap.encode_utf16().flat_map(u16::to_le_bytes).collect();
++    let request = StatusLineCommandRequest {
++        config: StatusLineCommandConfig {
++            command: format!(
++                "\"{shell_text}\" -NoProfile -NonInteractive -EncodedCommand {}",
++                STANDARD.encode(bytes)
++            ),
++            refresh_interval_secs: 10,
++            timeout_ms: 2000,
++        },
++        payload: serde_json::json!({
++            "codex": { "schema": 1 },
++            "session_id": "codexs-smoke-synthetic",
++            "cwd": root.path(),
++            "workspace": { "current_dir": root.path() }
++        }),
++        cwd: root.path().to_path_buf(),
++        width: 80,
++    };
++    let (cancel, runner_cancellation) = tokio::sync::oneshot::channel();
++    let run = run_status_line_command(request, runner_cancellation);
++    tokio::pin!(run);
++    let result = tokio::select! {
++        biased;
++        _ = &mut cancellation => {
++            let _ = cancel.send(());
++            run.await
++        }
++        result = &mut run => result,
++    };
++    // A failed directory cleanup is also a failed smoke, even if visible output was correct.
++    root.close()
++        .map_err(|_| color_eyre::eyre::eyre!("SMOKE_CLEANUP"))?;
++    let line = result.map_err(|error| {
++        color_eyre::eyre::eyre!(match error {
++            StatusLineCommandError::Timeout => "SMOKE_TIMEOUT",
++            StatusLineCommandError::EmptyOutput => "SMOKE_OUTPUT",
++            StatusLineCommandError::Cleanup { .. } => "SMOKE_CLEANUP",
++            StatusLineCommandError::Cancelled => "SMOKE_CANCELLED",
++            _ => "SMOKE_RUNNER",
++        })
++    })?;
++    let visible: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
++    if visible != "codexs-smoke-ok" {
++        color_eyre::eyre::bail!("SMOKE_OUTPUT");
++    }
++    Ok(())
++}
++
++#[cfg(all(test, windows))]
++mod tests {
++    use super::run_codexs_smoke;
++    use super::supervise_probe;
++    use std::fs;
++    use std::path::Path;
++    use std::path::PathBuf;
++    use std::time::Duration;
++    use std::time::Instant;
++    use tempfile::TempDir;
++    use windows_sys::Win32::Foundation::CloseHandle;
++    use windows_sys::Win32::Foundation::FILETIME;
++    use windows_sys::Win32::Foundation::HANDLE;
++    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
++    use windows_sys::Win32::System::Threading::GetProcessTimes;
++    use windows_sys::Win32::System::Threading::OpenProcess;
++    use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
++    use windows_sys::Win32::System::Threading::PROCESS_SYNCHRONIZE;
++    use windows_sys::Win32::System::Threading::PROCESS_TERMINATE;
++    use windows_sys::Win32::System::Threading::TerminateProcess;
++    use windows_sys::Win32::System::Threading::WaitForSingleObject;
++
++    struct ExactProcess(HANDLE);
++
++    impl ExactProcess {
++        fn read(record: &Path) -> Option<Self> {
++            let text = fs::read_to_string(record).ok()?;
++            let mut fields = text.split_whitespace();
++            let pid = fields.next()?.parse().ok()?;
++            let ticks: u64 = fields.next()?.parse().ok()?;
++            if fields.next().is_some() {
++                return None;
++            }
++            let handle = unsafe {
++                OpenProcess(
++                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE | PROCESS_TERMINATE,
++                    0,
++                    pid,
++                )
++            };
++            if handle.is_null() {
++                return None;
++            }
++            let mut created = FILETIME {
++                dwLowDateTime: 0,
++                dwHighDateTime: 0,
++            };
++            let mut exited = created;
++            let mut kernel = created;
++            let mut user = created;
++            let queried = unsafe {
++                GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user)
++            };
++            let actual =
++                (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
++            if queried == 0 || actual != ticks {
++                unsafe { CloseHandle(handle) };
++                return None;
++            }
++            Some(Self(handle))
++        }
++
++        fn assert_gone(&self) {
++            assert_eq!(unsafe { WaitForSingleObject(self.0, 0) }, WAIT_OBJECT_0);
++        }
++    }
++
++    impl Drop for ExactProcess {
++        fn drop(&mut self) {
++            // Failure cleanup uses the already verified handle, never a name or a reused PID.
++            if unsafe { WaitForSingleObject(self.0, 0) } != WAIT_OBJECT_0 {
++                unsafe { TerminateProcess(self.0, 1) };
++                unsafe { WaitForSingleObject(self.0, 5_000) };
++            }
++            unsafe { CloseHandle(self.0) };
++        }
++    }
++
++    struct Fixture {
++        _root: TempDir,
++        node: PathBuf,
++        formatter: PathBuf,
++    }
++
++    impl Fixture {
++        fn new(body: &str) -> Self {
++            let root = tempfile::tempdir().expect("owned smoke fixture");
++            let directory = root.path().join("space Unicode-ไทย % ! & ( ) ' fixture");
++            fs::create_dir(&directory).expect("fixture directory");
++            let formatter = directory.join("formatter % ! & ' probe.cjs");
++            let script = format!(
++                r#"const fs = require('node:fs');
++const path = require('node:path');
++const {{spawn, spawnSync}} = require('node:child_process');
++function record(file) {{
++  const ps = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
++  const query = '(Get-Process -Id ' + process.pid + ').StartTime.ToUniversalTime().ToFileTimeUtc()';
++  const p = spawnSync(ps, ['-NoProfile','-NonInteractive','-Command',query], {{encoding:'utf8', windowsHide:true}});
++  if (p.status !== 0 || !/^[0-9]+$/.test(p.stdout.trim())) process.exit(71);
++  fs.writeFileSync(file, process.pid + ' ' + p.stdout.trim());
++}}
++{body}
++"#
++            );
++            fs::write(&formatter, script).expect("synthetic formatter");
++            let node = which::which("node.exe").expect("hosted Node prerequisite");
++            Self {
++                _root: root,
++                node,
++                formatter,
++            }
++        }
++    }
++
++    impl Drop for Fixture {
++        fn drop(&mut self) {
++            for suffix in ["root", "child"] {
++                drop(ExactProcess::read(&self.formatter.with_extension(suffix)));
++            }
++        }
++    }
++
++    #[tokio::test]
++    async fn smoke_renders_synthetic_footer_without_config() {
++        let fixture = Fixture::new(
++            r#"let input = '';
++process.stdin.setEncoding('utf8');
++process.stdin.on('data', chunk => input += chunk);
++process.stdin.on('end', () => {
++  const payload = JSON.parse(input);
++  if (!payload.codex || payload.codex.schema !== 1) process.exit(72);
++  if (process.argv.length !== 4 || process.argv[2] !== '--config') process.exit(73);
++  const config = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
++  if (config.version !== 4 || config.colorLevel !== 0 || config.lines[0][0].customText !== 'codexs-smoke-ok') process.exit(74);
++  for (const key of ['CODEX_HOME', 'HOME', 'USERPROFILE', 'TEMP', 'TMP']) {
++    if (!process.env[key] || !fs.existsSync(process.env[key])) process.exit(75);
++  }
++  for (const key of Object.keys(process.env)) {
++    if (/(API_KEY|ACCESS_TOKEN|AUTH_TOKEN|SIGNING_KEY)$/.test(key)) process.exit(76);
++  }
++  process.stdout.write('codexs-smoke-ok\n');
++});"#,
++        );
++        run_codexs_smoke(fixture.node.clone(), fixture.formatter.clone())
++            .await
++            .expect("isolated synthetic formatter should render");
++    }
++
++    #[tokio::test]
++    async fn smoke_rejects_wrong_output() {
++        for body in [
++            "process.stdout.write('wrong-visible-footer\\n');",
++            "process.stdout.write('');",
++        ] {
++            let fixture = Fixture::new(body);
++            let error = run_codexs_smoke(fixture.node.clone(), fixture.formatter.clone())
++                .await
++                .expect_err("wrong or empty output must fail");
++            assert_eq!(error.to_string(), "SMOKE_OUTPUT");
++        }
++    }
++
++    #[test]
++    fn smoke_deadline_waits_for_cleanup_before_runtime_shutdown() {
++        let fixture = Fixture::new(
++            r#"fs.writeFileSync(__filename.replace(/\.cjs$/, '.owned'), process.env.CODEX_HOME);
++const childCode = '(' + record.toString() + ')(' + JSON.stringify(__filename.replace(/\.cjs$/, '.child')) + '); setInterval(() => {}, 1000);';
++spawn(process.execPath, ['-e', "const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');" + childCode], {stdio:'ignore', windowsHide:true});
++record(__filename.replace(/\.cjs$/, '.root'));
++setInterval(() => {}, 1000);"#,
++        );
++        let runtime = tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++            .expect("standalone smoke runtime");
++        let started = Instant::now();
++        let (root, child, owned) = runtime.block_on(async {
++            let (expire, deadline) = tokio::sync::oneshot::channel();
++            let task = tokio::spawn(supervise_probe(
++                fixture.node.clone(),
++                fixture.formatter.clone(),
++                async move { deadline.await.expect("test explicitly expires the deadline") },
++            ));
++            let mut root = None;
++            let mut child = None;
++            while started.elapsed() < Duration::from_secs(9) && !task.is_finished() {
++                root = root
++                    .or_else(|| ExactProcess::read(&fixture.formatter.with_extension("root")));
++                child = child
++                    .or_else(|| ExactProcess::read(&fixture.formatter.with_extension("child")));
++                if root.is_some() && child.is_some() {
++                    break;
++                }
++                tokio::time::sleep(Duration::from_millis(10)).await;
++            }
++            let root = root.expect("formatter identity was recorded before deadline");
++            let child = child.expect("child identity was recorded before deadline");
++            let owned = PathBuf::from(
++                fs::read_to_string(fixture.formatter.with_extension("owned"))
++                    .expect("diagnostic recorded its owned directory"),
++            );
++            assert!(owned.is_dir());
++            assert!(!task.is_finished(), "force the outer deadline on a live probe");
++            expire.send(()).expect("deadline receiver is live");
++            let error = task
++                .await
++                .expect("deadline supervisor joins")
++                .expect_err("expired deadline must fail");
++            assert_eq!(error.to_string(), "SMOKE_TIMEOUT");
++            (root, child, owned)
++        });
++        // The standalone CLI drops its runtime immediately after block_on returns.
++        drop(runtime);
++        root.assert_gone();
++        child.assert_gone();
++        assert!(!owned.exists(), "owned directory removed before runtime shutdown");
++        assert!(started.elapsed() < Duration::from_secs(10));
++    }
++
++    #[tokio::test]
++    async fn smoke_bounds_timeout_and_cleans_descendants() {
++        for cancel in [false, true] {
++            let fixture = Fixture::new(
++                r#"const childCode = '(' + record.toString() + ')(' + JSON.stringify(__filename.replace(/\.cjs$/, '.child')) + '); setInterval(() => {}, 1000);';
++spawn(process.execPath, ['-e', "const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');" + childCode], {stdio:'ignore', windowsHide:true});
++record(__filename.replace(/\.cjs$/, '.root'));
++setInterval(() => {}, 1000);"#,
++            );
++            let started = Instant::now();
++            let task = tokio::spawn(run_codexs_smoke(
++                fixture.node.clone(),
++                fixture.formatter.clone(),
++            ));
++            let mut root = None;
++            let mut child = None;
++            while started.elapsed() < Duration::from_secs(9) && !task.is_finished() {
++                root = root
++                    .or_else(|| ExactProcess::read(&fixture.formatter.with_extension("root")));
++                child = child
++                    .or_else(|| ExactProcess::read(&fixture.formatter.with_extension("child")));
++                if root.is_some() && child.is_some() {
++                    break;
++                }
++                tokio::time::sleep(Duration::from_millis(10)).await;
++            }
++            if cancel {
++                task.abort();
++                let error = task.await.expect_err("aborted smoke should cancel");
++                assert!(error.is_cancelled());
++            } else {
++                let error = task
++                    .await
++                    .expect("smoke task should join")
++                    .expect_err("hanging formatter must time out");
++                assert_eq!(error.to_string(), "SMOKE_TIMEOUT");
++            }
++            assert!(started.elapsed() < Duration::from_secs(10));
++            // The contract includes cleanup when the future is dropped, not just process exit.
++            tokio::time::sleep(Duration::from_millis(50)).await;
++            root.expect("formatter identity was recorded").assert_gone();
++            child.expect("descendant identity was recorded").assert_gone();
++        }
++    }
++}
 diff --git a/codex-rs/tui/src/status_line_command_tests.rs b/codex-rs/tui/src/status_line_command_tests.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..6f2020e6665f6a26ecab01658f4f8a03c17efc3d

@@ -603,6 +603,53 @@ jobs:
           & ([scriptblock]::Create([IO.File]::ReadAllText($archiveTests)))
           $global:LASTEXITCODE = 0
 
+      - name: Verify overlay round-trip
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $overlayFile = Join-Path (Get-Location) 'codexs/upstream/overlay.json'
+          $patchFile = Join-Path (Get-Location) 'codexs/upstream/overlay.patch'
+          $overlay = Get-Content -LiteralPath $overlayFile -Raw | ConvertFrom-Json
+          if ($overlay.schema -ne 1 -or $overlay.base_sha -cnotmatch '^[a-f0-9]{40}$' -or
+              $overlay.accepted_sha -cnotmatch '^[a-f0-9]{40}$' -or $overlay.patch_sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'OVERLAY_IDENTITY' }
+          if ((Get-FileHash -LiteralPath $patchFile -Algorithm SHA256).Hash.ToLowerInvariant() -cne $overlay.patch_sha256) { throw 'OVERLAY_HASH' }
+          $expected = @($overlay.paths)
+          if ($expected.Count -lt 1 -or $expected.Count -gt 1000) { throw 'OVERLAY_PATHS' }
+          foreach ($name in $expected) {
+            if ($name -isnot [string] -or $name -cnotmatch '^codex-rs/[A-Za-z0-9_./-]+$' -or
+                $name -match '(^|/)\.\.(/|$)|\.snap(?:\.new)?$|\.pending-snap$') { throw 'OVERLAY_PATHS' }
+          }
+          if (@($expected | Sort-Object -Unique).Count -ne $expected.Count) { throw 'OVERLAY_PATHS' }
+          $owned = Join-Path $env:RUNNER_TEMP ('codexs-overlay-' + [guid]::NewGuid().ToString('N'))
+          $null = [IO.Directory]::CreateDirectory($owned)
+          try {
+            foreach ($item in @(Get-ChildItem Env:GIT_*)) { Remove-Item -LiteralPath ('Env:' + $item.Name) }
+            $env:GIT_CONFIG_NOSYSTEM = '1'
+            $env:GIT_TERMINAL_PROMPT = '0'
+            $env:GIT_CONFIG_GLOBAL = Join-Path $owned 'empty-config'
+            [IO.File]::WriteAllText($env:GIT_CONFIG_GLOBAL, '')
+            function Invoke-OverlayGit([string[]]$Arguments) {
+              $ErrorActionPreference = 'Continue'
+              $output = @(& git -c core.longpaths=true -c core.autocrlf=false -C $owned @Arguments 2>&1 | ForEach-Object { "$_" })
+              $code = $LASTEXITCODE
+              if ($null -eq $code -or $code -ne 0) { throw ('OVERLAY_GIT_' + $Arguments[0]) }
+              return $output
+            }
+            $null = Invoke-OverlayGit @('init','--bare','--quiet')
+            $null = Invoke-OverlayGit @('fetch','--quiet','--no-tags','--depth=1','https://github.com/TK-06/codexs.git',$overlay.base_sha,$overlay.accepted_sha)
+            $null = Invoke-OverlayGit @('read-tree',$overlay.base_sha)
+            $null = Invoke-OverlayGit @('apply','--cached','--whitespace=nowarn','--',$patchFile)
+            $null = Invoke-OverlayGit @('diff','--cached','--exit-code',$overlay.accepted_sha,'--','codex-rs')
+            $actual = @(Invoke-OverlayGit @('diff','--cached','--name-only',$overlay.base_sha))
+            if ($actual.Count -ne $expected.Count -or @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual -CaseSensitive).Count -ne 0) { throw 'OVERLAY_PATHS' }
+            Write-Host "overlay_roundtrip=ok base=$($overlay.base_sha) native=$($overlay.accepted_sha) paths=$($actual.Count) patch_sha256=$($overlay.patch_sha256)"
+          } finally {
+            $full = [IO.Path]::GetFullPath($owned)
+            $prefix = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
+            if (-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($full) -notmatch '^codexs-overlay-[a-f0-9]{32}$') { throw 'OVERLAY_CLEANUP' }
+            Remove-Item -LiteralPath $full -Recurse -Force
+          }
+          $global:LASTEXITCODE = 0
+
       - name: Check status-line Rust formatting
         working-directory: codex-rs
         run: |

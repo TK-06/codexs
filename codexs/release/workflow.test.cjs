@@ -59,6 +59,61 @@ function caller(overrides = {}) {
   return { inputs: { candidate_sha: 'a'.repeat(40), baseline_sha: 'c'.repeat(40), validation_id: 'cleanup', scope: 'cleanup', ...overrides }, matrix: { scope: 'full' } };
 }
 
+test('overlay patch checkout preserves exact Git blob bytes even with autocrlf enabled', () => {
+  const git = args => {
+    const result = spawnSync('git', ['-c', `safe.directory=${root.replaceAll('\\', '/')}`, '-c', 'core.autocrlf=true', ...args],
+      { cwd: root, windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
+    assert.equal(result.status, 0, String(result.stderr));
+    return result.stdout;
+  };
+  const blob = git(['cat-file', 'blob', 'HEAD:codexs/upstream/overlay.patch']);
+  const checkout = git(['cat-file', '--filters', 'HEAD:codexs/upstream/overlay.patch']);
+  assert.equal(Buffer.compare(checkout, blob), 0, 'checkout line-ending conversion must not alter signed overlay bytes');
+});
+
+test('overlay round-trip requires verified bytes, successful application and the exact native tree', () => {
+  const patch = 'synthetic overlay bytes\n';
+  const metadata = { schema: 1, base_sha: 'c'.repeat(40), accepted_sha: 'a'.repeat(40),
+    patch_sha256: require('node:crypto').createHash('sha256').update(patch).digest('hex'), paths: ['codex-rs/synthetic.rs'] };
+  for (const mode of ['good', 'hash', 'identity', 'fetch', 'apply', 'tree', 'paths']) {
+    const data = structuredClone(metadata);
+    if (mode === 'hash') data.patch_sha256 = '0'.repeat(64);
+    if (mode === 'identity') data.accepted_sha = '--unsafe-ref';
+    const prelude = `
+$ErrorActionPreference='Stop'
+Set-Location -LiteralPath $env:RUNNER_TEMP
+$null=[IO.Directory]::CreateDirectory((Join-Path $env:RUNNER_TEMP 'codexs/upstream'))
+[IO.File]::WriteAllBytes((Join-Path $env:RUNNER_TEMP 'codexs/upstream/overlay.patch'),[Convert]::FromBase64String('${Buffer.from(patch).toString('base64')}'))
+[IO.File]::WriteAllBytes((Join-Path $env:RUNNER_TEMP 'codexs/upstream/overlay.json'),[Convert]::FromBase64String('${Buffer.from(JSON.stringify(data)).toString('base64')}'))
+function git {
+  $call=@($args)
+  Add-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'git-calls.jsonl') -Value (ConvertTo-Json -InputObject $call -Compress)
+  $global:LASTEXITCODE=0
+  if (($env:CODEXS_OVERLAY_TEST_MODE -eq 'fetch' -and $call -contains 'fetch') -or
+      ($env:CODEXS_OVERLAY_TEST_MODE -eq 'apply' -and $call -contains 'apply') -or
+      ($env:CODEXS_OVERLAY_TEST_MODE -eq 'tree' -and $call -contains '--exit-code')) { $global:LASTEXITCODE=7; return }
+  if ($call -contains '--name-only') {
+    'codex-rs/synthetic.rs'
+    if ($env:CODEXS_OVERLAY_TEST_MODE -eq 'paths') { 'unreviewed.txt' }
+  }
+}
+`;
+    const result = execute('Verify overlay round-trip', {}, { CODEXS_OVERLAY_TEST_MODE: mode }, ({ result, env }) => {
+      if (mode !== 'good') return;
+      assert.equal(result.status, 0, result.stderr);
+      const calls = fs.readFileSync(path.join(env.RUNNER_TEMP, 'git-calls.jsonl'), 'utf8').replace(/^\uFEFF/, '').trim().split(/\r?\n/).map(JSON.parse);
+      const fetch = calls.find(c => c.includes('fetch'));
+      assert.ok(fetch.includes('https://github.com/TK-06/codexs.git'));
+      assert.ok(fetch.includes(metadata.base_sha) && fetch.includes(metadata.accepted_sha));
+      assert.ok(calls.some(c => c.includes('apply') && c.includes('--cached')));
+      assert.ok(calls.some(c => c.includes('--exit-code') && c.includes(metadata.accepted_sha) && c.includes('codex-rs')));
+      assert.ok(!fs.readdirSync(env.RUNNER_TEMP).some(name => name.startsWith('codexs-overlay-')));
+    }, prelude);
+    if (mode === 'good') assert.match(result.stdout, /overlay_roundtrip=ok/);
+    else assert.notEqual(result.status, 0, `round-trip accepted ${mode}`);
+  }
+});
+
 // Break caught: an ineffective pagefile change wastes a full compilation or
 // consumes the disk reserve. Only CIM readings are substituted; the actual gates run.
 function memoryGate(name, readings, inspect) {

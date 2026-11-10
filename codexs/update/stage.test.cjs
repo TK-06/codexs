@@ -289,6 +289,38 @@ test('transient local validation failure does not permanently reject a ready rel
   const state = await f.state(); assert.deepEqual(state.ready, f.candidate.ref); assert.deepEqual(state.rejected, []);
 });
 
+test('host smoke failures defer without blacklisting a signed candidate', async t => {
+  const codes = ['SMOKE_IO', 'SMOKE_ENV', 'SMOKE_ARGS', 'SMOKE_RUNTIME', 'SMOKE_RUNNER', 'SMOKE_CANCELLED', 'SMOKE_TIMEOUT', 'SMOKE_CLEANUP', 'SMOKE_UNSUPPORTED'];
+  for (const mode of ['check', 'promote']) for (const code of codes) await t.test(`${mode} ${code}`, async t => {
+    const f = await fixture(t);
+    if (mode === 'promote') assert.equal((await f.check()).code, 'READY');
+    const before = await f.state();
+    f.ports.smoke = async () => { throw new UpdateError(code); };
+    assert.equal((await api().runUpdate({ mode, root: f.root, request: {} }, f.ports)).code, code);
+    const state = await f.state();
+    assert.deepEqual(state.current, before.current); assert.deepEqual(state.previous, before.previous);
+    assert.deepEqual(state.ready, before.ready); assert.deepEqual(state.rejected, []);
+    if (mode === 'check') {
+      assert.equal(state.failures, 1); assert.equal(state.next_check_ms, NOW + HOUR);
+      assert.equal((await f.check()).code, 'THROTTLED');
+    }
+    f.ports.smoke = async () => {};
+    f.advance();
+    assert.equal((await api().runUpdate({ mode, root: f.root, request: {} }, f.ports)).code, mode === 'check' ? 'READY' : 'PROMOTED');
+    await f.unchanged();
+  });
+});
+
+test('wrong visible smoke output rejects a ready candidate without promotion', async t => {
+  const f = await fixture(t); assert.equal((await f.check()).code, 'READY');
+  f.ports.smoke = async () => { throw new UpdateError('SMOKE_OUTPUT'); };
+  assert.equal((await api().runUpdate({ mode: 'promote', root: f.root, request: {} }, f.ports)).code, 'SMOKE_OUTPUT');
+  const state = await f.state();
+  assert.equal(state.current, null); assert.equal(state.ready, null);
+  assert.deepEqual(state.rejected, [f.candidate.ref.release_id]);
+  await f.unchanged();
+});
+
 test('missing installed sidecars reject readiness instead of retrying a broken candidate', async t => {
   const f = await fixture(t); await f.check();
   await fs.unlink(path.join(f.root, 'versions', f.candidate.ref.release_id, 'release.sig'));
@@ -332,11 +364,14 @@ test('staging consumes a real ZIP through the existing extraction boundary', asy
     assert.equal(result.status, 0, result.stderr);
   }
   powershell(`Add-Type -AssemblyName System.IO.Compression
+# Hosted TEMP can contain an 8.3 alias. Exercise that spelling even under a long local TEMP.
+$sourceAlias = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:STAGE_SOURCE).ShortPath
+$sourceRoot = (Get-Item -LiteralPath $sourceAlias).FullName
 $stream = [IO.File]::Open($env:STAGE_ARCHIVE,[IO.FileMode]::CreateNew)
 $zip = [IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Create,$false,[Text.Encoding]::UTF8)
 try {
-  foreach ($file in (Get-ChildItem -LiteralPath $env:STAGE_SOURCE -File -Recurse)) {
-    $name = $file.FullName.Substring($env:STAGE_SOURCE.Length+1).Replace('\\','/')
+  foreach ($file in (Get-ChildItem -LiteralPath $sourceRoot -File -Recurse)) {
+    $name = $file.FullName.Substring($sourceRoot.Length+1).Replace('\\','/')
     $entry = $zip.CreateEntry($name)
     $output = $entry.Open()
     try { $bytes = [IO.File]::ReadAllBytes($file.FullName); $output.Write($bytes,0,$bytes.Length) } finally { $output.Dispose() }
@@ -345,7 +380,15 @@ try {
   b.archive = await fs.readFile(archive); b.release.archive.bytes = b.archive.length; b.release.archive.sha256 = hash(b.archive);
   b.manifestBytes = encodeRelease(b.release); b.signature = sign(null, Buffer.concat([Buffer.from('codexs-release-v1\0'), b.manifestBytes]), keys.privateKey);
   b.ref.manifest_sha256 = hash(b.manifestBytes);
-  f.ports.extract = async args => powershell(`& ([scriptblock]::Create([IO.File]::ReadAllText($env:STAGE_SCRIPT))) -Archive $env:STAGE_ARCHIVE -Destination $env:STAGE_DESTINATION -Inventory $env:STAGE_INVENTORY -AllowedRoot $env:STAGE_ROOT`,
-    { STAGE_SCRIPT: path.join(__dirname, 'archive.ps1'), STAGE_ARCHIVE: args.archive, STAGE_DESTINATION: args.destination, STAGE_INVENTORY: args.inventory, STAGE_ROOT: args.allowedRoot });
-  assert.equal((await f.check()).code, 'READY'); assert.deepEqual((await f.state()).ready, b.ref); await f.unchanged();
+  let extractionFailure;
+  f.ports.extract = async args => {
+    try {
+      powershell(`& ([scriptblock]::Create([IO.File]::ReadAllText($env:STAGE_SCRIPT))) -Archive $env:STAGE_ARCHIVE -Destination $env:STAGE_DESTINATION -Inventory $env:STAGE_INVENTORY -AllowedRoot $env:STAGE_ROOT`,
+        { STAGE_SCRIPT: path.join(__dirname, 'archive.ps1'), STAGE_ARCHIVE: args.archive, STAGE_DESTINATION: args.destination, STAGE_INVENTORY: args.inventory, STAGE_ROOT: args.allowedRoot });
+    } catch (error) { extractionFailure = error; throw error; }
+  };
+  const result = await f.check();
+  // The public updater deliberately bounds errors; preserve the synthetic adapter failure here.
+  if (extractionFailure) throw extractionFailure;
+  assert.equal(result.code, 'READY'); assert.deepEqual((await f.state()).ready, b.ref); await f.unchanged();
 });
