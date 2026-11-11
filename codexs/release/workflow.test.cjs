@@ -579,26 +579,50 @@ public class SmokeBoundaryProbe {
 }
 '@`);
     assert.equal(compile.status, 0, compile.stderr);
-    for (const mode of ['good', 'extra', 'malformed', 'wrong-json', 'nonzero', 'missing-zero', 'unknown-zero', 'failure-zero', 'private-error', 'malformed-failure', 'sentinel-write', 'private-success', 'stdout-cap', 'stderr-cap', 'timeout', 'cleanup-failure', 'cleanup-and-primary', 'start-failure', 'log-failure']) {
+    for (const mode of ['good', 'fast-exit', 'extra', 'malformed', 'wrong-json', 'nonzero', 'missing-zero', 'unknown-zero', 'failure-zero', 'private-error', 'malformed-failure', 'sentinel-write', 'private-success', 'stdout-cap', 'stderr-cap', 'timeout', 'cleanup-failure', 'cleanup-and-primary', 'start-failure', 'log-failure']) {
       await t.test(mode, () => {
         const record = path.join(directory, `${mode}.args`);
         const log = path.join(directory, 'smoke-failures.jsonl');
         fs.rmSync(log, { force: true });
-        const cleanup = mode.startsWith('cleanup-') ? `
+        const cleanup = mode === 'fast-exit' ? `
 function Start-Process {
   $p=Microsoft.PowerShell.Management\\Start-Process @args
-  $p | Add-Member ScriptMethod Dispose { $this.PSBase.Dispose(); throw 'PRIVATE_CLEANUP' } -Force
+  Start-Sleep -Milliseconds 250
   return $p
 }
-` : mode === 'start-failure' ? "function Start-Process { throw 'PRIVATE_CREDENTIAL C:\\private\\payload' }\n" : '';
+function New-Object {
+  $p=Microsoft.PowerShell.Utility\\New-Object @args
+  if ($args[0] -ceq 'System.Diagnostics.Process') {
+    $p | Add-Member ScriptMethod Start { $ok=$this.PSBase.Start(); Start-Sleep -Milliseconds 250; return $ok } -Force
+  }
+  return $p
+}
+` : mode.startsWith('cleanup-') ? `
+function New-Object {
+  $p=Microsoft.PowerShell.Utility\\New-Object @args
+  if ($args[0] -ceq 'System.Diagnostics.Process') {
+    $p | Add-Member ScriptMethod Dispose { $this.PSBase.Dispose(); throw 'PRIVATE_CLEANUP' } -Force
+  }
+  return $p
+}
+` : mode === 'start-failure' ? `
+function New-Object {
+  $p=Microsoft.PowerShell.Utility\\New-Object @args
+  if ($args[0] -ceq 'System.Diagnostics.Process') {
+    $p | Add-Member ScriptMethod Start { throw 'PRIVATE_CREDENTIAL C:\\private\\payload' } -Force
+  }
+  return $p
+}
+` : '';
         const result = run("$ErrorActionPreference='Stop'\n" + cleanup + gate + '\nInvoke-CodexsSmokeGate $env:CODEXS_TEST_BINARY',
           { CODEXS_TEST_SMOKE_MODE: ['log-failure', 'cleanup-and-primary'].includes(mode) ? 'nonzero' : mode, CODEXS_TEST_ARGS: record,
             ...(mode === 'log-failure' ? { CODEXS_LOG_DIR: path.join(directory, 'absent-log-directory') } : {}) });
-        if (mode === 'good') {
+        if (mode === 'good' || mode === 'fast-exit') {
           const diagnostic = fs.readdirSync(directory).filter(name => name.startsWith('codexs-smoke-gate-')).flatMap(name =>
             fs.readdirSync(path.join(directory, name)).filter(file => /\.(out|err)$/.test(file)).map(file =>
               [file, fs.readFileSync(path.join(directory, name, file), 'utf8')]));
-          assert.equal(result.status, 0, result.stderr + JSON.stringify(diagnostic));
+          const failureRecord = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+          assert.equal(result.status, 0, result.stderr + JSON.stringify(diagnostic) + failureRecord);
           const args = fs.readFileSync(record, 'utf8').trim().split('\n');
           assert.equal(args.length, 4);
           assert.ok(args[0].startsWith('codexs-smoke|--node|'));

@@ -932,19 +932,44 @@ jobs:
                 # occur in those filenames; shell metacharacters remain ordinary CreateProcess data.
                 $quoted = @($case.args | ForEach-Object { '"' + $_ + '"' })
                 $process = $null
+                $started = $false
+                $outStream = $null
+                $errStream = $null
+                $outCopy = $null
+                $errCopy = $null
                 $exit = $null
                 $failure = $null
                 $clock = [Diagnostics.Stopwatch]::StartNew()
                 try {
-                  $process = Start-Process -FilePath $Binary -ArgumentList $quoted -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-                  # Hold the owned handle; PS 5.1 otherwise loses ExitCode.
-                  $null = $process.Handle
+                  # Own the handle from CreateProcess: Start-Process -PassThru can
+                  # lose ExitCode if the child exits before the caller reads Handle.
+                  $process = New-Object System.Diagnostics.Process
+                  $process.StartInfo.FileName = $Binary
+                  $process.StartInfo.Arguments = $quoted -join ' '
+                  $process.StartInfo.UseShellExecute = $false
+                  $process.StartInfo.CreateNoWindow = $true
+                  $process.StartInfo.RedirectStandardOutput = $true
+                  $process.StartInfo.RedirectStandardError = $true
+                  $outStream = [IO.File]::Open($stdout,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+                  $errStream = [IO.File]::Open($stderr,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+                  $started = $process.Start()
+                  if (-not $started) { throw 'SMOKE_PROCESS_FAILURE' }
+                  # Drain concurrently to owned files, not unbounded strings in memory.
+                  $outCopy = $process.StandardOutput.BaseStream.CopyToAsync($outStream)
+                  $errCopy = $process.StandardError.BaseStream.CopyToAsync($errStream)
                   $deadline = [DateTime]::UtcNow.AddSeconds(25)
                   do {
                     if ((Get-Item -LiteralPath $stdout).Length -gt 4096 -or (Get-Item -LiteralPath $stderr).Length -gt 4096) { throw 'SMOKE_DIAGNOSTIC_LIMIT' }
                     if ([DateTime]::UtcNow -gt $deadline) { throw 'SMOKE_DIAGNOSTIC_TIMEOUT' }
-                  } while (-not $process.WaitForExit(50))
-                  $process.WaitForExit()
+                    $exited = $process.WaitForExit(25)
+                    if ($exited -and (-not $outCopy.IsCompleted -or -not $errCopy.IsCompleted)) { Start-Sleep -Milliseconds 25 }
+                  } while (-not $exited -or -not $outCopy.IsCompleted -or -not $errCopy.IsCompleted)
+                  $null = $outCopy.GetAwaiter().GetResult()
+                  $null = $errCopy.GetAwaiter().GetResult()
+                  $outStream.Dispose()
+                  $outStream = $null
+                  $errStream.Dispose()
+                  $errStream = $null
                   $exit = $process.ExitCode
                   if ((Get-Item -LiteralPath $stdout).Length -gt 4096 -or (Get-Item -LiteralPath $stderr).Length -gt 4096) { throw 'SMOKE_DIAGNOSTIC_LIMIT' }
                   $text = [IO.File]::ReadAllText($stdout)
@@ -962,16 +987,32 @@ jobs:
                   if ($_.Exception.Message -cin @('SMOKE_DIAGNOSTIC_LIMIT','SMOKE_DIAGNOSTIC_TIMEOUT','SMOKE_DIAGNOSTIC_INVALID','SMOKE_FAILURE_INVALID','SMOKE_SENTINEL_CHANGED')) { $failure = $_ }
                   else { $failure = [Exception]::new('SMOKE_PROCESS_FAILURE') }
                 } finally {
+                  $cleanupClock = [Diagnostics.Stopwatch]::StartNew()
                   if ($process) {
                     try {
-                      if (-not $process.HasExited) {
-                        $process.Kill() # Only this Start-Process handle; the outer Job owns descendants.
+                      if ($started -and -not $process.HasExited) {
+                        $process.Kill() # Only this owned handle; the outer Job owns descendants.
                         if (-not $process.WaitForExit(5000)) { throw 'SMOKE_PROCESS_CLEANUP' }
                       }
-                      if ($null -eq $exit -and $process.HasExited) { $exit = $process.ExitCode }
+                      if ($started -and $null -eq $exit -and $process.HasExited) { $exit = $process.ExitCode }
                     } catch { if ($null -eq $failure) { $failure = [Exception]::new('SMOKE_PROCESS_CLEANUP') } }
+                    if ($started) {
+                      try {
+                        $process.StandardOutput.Dispose()
+                        $process.StandardError.Dispose()
+                        $copies = [Threading.Tasks.Task[]]@(@($outCopy,$errCopy) | Where-Object { $null -ne $_ })
+                        $remaining = [int][Math]::Max(0,5000 - $cleanupClock.ElapsedMilliseconds)
+                        if ($copies.Count -gt 0 -and -not [Threading.Tasks.Task]::WaitAll($copies,$remaining)) { throw 'SMOKE_PROCESS_CLEANUP' }
+                      } catch { if ($null -eq $failure) { $failure = [Exception]::new('SMOKE_PROCESS_CLEANUP') } }
+                    }
                     try { $process.Dispose() }
                     catch { if ($null -eq $failure) { $failure = [Exception]::new('SMOKE_PROCESS_CLEANUP') } }
+                  }
+                  foreach ($stream in @($outStream,$errStream)) {
+                    if ($null -ne $stream) {
+                      try { $stream.Dispose() }
+                      catch { if ($null -eq $failure) { $failure = [Exception]::new('SMOKE_PROCESS_CLEANUP') } }
+                    }
                   }
                   $clock.Stop()
                   if ($null -ne $failure) {
