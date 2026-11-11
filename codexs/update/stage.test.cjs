@@ -290,7 +290,12 @@ test('transient local validation failure does not permanently reject a ready rel
 });
 
 test('host smoke failures defer without blacklisting a signed candidate', async t => {
-  const codes = ['SMOKE_IO', 'SMOKE_ENV', 'SMOKE_ARGS', 'SMOKE_RUNTIME', 'SMOKE_RUNNER', 'SMOKE_CANCELLED', 'SMOKE_TIMEOUT', 'SMOKE_CLEANUP', 'SMOKE_UNSUPPORTED'];
+  const codes = [
+    ...['ARGS', 'IO', 'ENV', 'TIMEOUT', 'OUTPUT', 'CANCELLED', 'RUNNER'].flatMap(primary =>
+      ['', '_RUNNER_CLEANUP', '_DIRECTORY_CLEANUP', '_RUNNER_AND_DIRECTORY_CLEANUP'].map(cleanup => `SMOKE_${primary}${cleanup}`)),
+    'SMOKE_RUNNER_CLEANUP', 'SMOKE_DIRECTORY_CLEANUP', 'SMOKE_RUNNER_AND_DIRECTORY_CLEANUP', 'SMOKE_UNSUPPORTED', 'SMOKE_RUNTIME',
+    'SMOKE_CLEANUP', // Older installed versions may still emit the legacy host code.
+  ].filter(code => code !== 'SMOKE_OUTPUT');
   for (const mode of ['check', 'promote']) for (const code of codes) await t.test(`${mode} ${code}`, async t => {
     const f = await fixture(t);
     if (mode === 'promote') assert.equal((await f.check()).code, 'READY');

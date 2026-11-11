@@ -63,6 +63,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.scopes.outputs.matrix }}
+      candidate_sha: ${{ steps.scopes.outputs.candidate_sha }}
       validation_summary: ${{ steps.scopes.outputs.validation_summary }}
     steps:
       - name: Resolve execution scopes
@@ -95,6 +96,8 @@ jobs:
           } else { throw "Unsupported event: $env:GITHUB_EVENT_NAME" }
           $matrix = @{ scope=$scopes } | ConvertTo-Json -Compress
           "matrix=$matrix" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          $candidate = if ($hasCaller) { $env:CALLER_CANDIDATE_SHA } else { '' }
+          "candidate_sha=$candidate" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           $suffix = if ($hasCaller) { "$env:CALLER_VALIDATION_ID-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" } else { "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" }
           $locator = @{
             schema=1; verified=$false; repository=$env:GITHUB_REPOSITORY
@@ -106,6 +109,7 @@ jobs:
 
   quick_checks:
     name: Quick workflow and status-line formatting checks
+    needs: plan
     runs-on: windows-2022
     timeout-minutes: 10
     defaults:
@@ -117,6 +121,14 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
+
+      - name: Checkout candidate for formatting
+        if: needs.plan.outputs.candidate_sha != ''
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.candidate_sha }}
+          path: candidate-format
 
       - name: Install pinned Rust formatter
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -358,8 +370,9 @@ jobs:
                       }
                       $state | ConvertTo-Json | Out-File -LiteralPath $statePath -Encoding utf8
                       $env:CODEXS_GUARD_STATE = $statePath
-                      $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$ProgressPreference = 'SilentlyContinue'`n" + $runner))
-                      & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded > $null 2> (Join-Path $probeRoot ($id + '.stderr'))
+                      $env:CODEXS_PROBE_RUNNER_SCRIPT = Join-Path $probeRoot ($id + '.runner.ps1')
+                      [IO.File]::WriteAllText($env:CODEXS_PROBE_RUNNER_SCRIPT,"`$ProgressPreference = 'SilentlyContinue'`n" + $runner,[Text.UTF8Encoding]::new($false))
+                      & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -Command '. ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_PROBE_RUNNER_SCRIPT)))' > $null 2> (Join-Path $probeRoot ($id + '.stderr'))
                       $exitCode = $LASTEXITCODE
                       Equal $exitCode $nativeExit
                       Equal (Get-Content -LiteralPath $state.native_exit) "$nativeExit"
@@ -403,8 +416,9 @@ jobs:
                           New-Item -ItemType Directory -Path ([IO.Path]::ChangeExtension($state.cargo_log, '.exit-readiness.log')) | Out-Null
                       }
                       $env:CODEXS_GUARD_STATE = $statePath
-                      $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($runner))
-                      & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded > $null 2> (Join-Path $probeRoot ($id + '.stderr'))
+                      $env:CODEXS_PROBE_RUNNER_SCRIPT = Join-Path $probeRoot ($id + '.runner.ps1')
+                      [IO.File]::WriteAllText($env:CODEXS_PROBE_RUNNER_SCRIPT,$runner,[Text.UTF8Encoding]::new($false))
+                      & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -Command '. ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_PROBE_RUNNER_SCRIPT)))' > $null 2> (Join-Path $probeRoot ($id + '.stderr'))
                       $exitCode = $LASTEXITCODE
                       Equal $exitCode $case.primary
                       Equal (Get-Content -LiteralPath $state.native_exit) "$($case.primary)"
@@ -529,8 +543,9 @@ jobs:
                       }
                       $state | ConvertTo-Json | Out-File -LiteralPath $statePath -Encoding utf8
                       $env:CODEXS_GUARD_STATE = $statePath
-                      $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$ProgressPreference = 'SilentlyContinue'`n" + $runner))
-                      & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded > $null 2> (Join-Path $probeRoot ($id + '.stderr'))
+                      $env:CODEXS_PROBE_RUNNER_SCRIPT = Join-Path $probeRoot ($id + '.runner.ps1')
+                      [IO.File]::WriteAllText($env:CODEXS_PROBE_RUNNER_SCRIPT,"`$ProgressPreference = 'SilentlyContinue'`n" + $runner,[Text.UTF8Encoding]::new($false))
+                      & powershell.exe -NoProfile -NonInteractive -OutputFormat Text -Command '. ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_PROBE_RUNNER_SCRIPT)))' > $null 2> (Join-Path $probeRoot ($id + '.stderr'))
                       $exitCode = $LASTEXITCODE
                       Equal $exitCode $case.want
                       Equal (Get-Content -LiteralPath $state.native_exit) '0'
@@ -651,15 +666,31 @@ jobs:
           $global:LASTEXITCODE = 0
 
       - name: Check status-line Rust formatting
-        working-directory: codex-rs
+        env:
+          FORMAT_CANDIDATE_SHA: ${{ needs.plan.outputs.candidate_sha }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $explicit = -not [string]::IsNullOrEmpty($env:FORMAT_CANDIDATE_SHA)
+          $nativeRoot = if ($explicit) { 'candidate-format/codex-rs' } else { 'codex-rs' }
+          if ($explicit) {
+            if ($env:FORMAT_CANDIDATE_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid formatting candidate identity' }
+            $sha = & git -C candidate-format rev-parse HEAD
+            if ($LASTEXITCODE -ne 0 -or $sha -cne $env:FORMAT_CANDIDATE_SHA) { throw 'Formatting checkout does not match validated candidate' }
+          }
+          Set-Location -LiteralPath $nativeRoot
           $files = @(
             'tui/src/status_line_command.rs',
             'tui/src/status_line_command_tests.rs',
             'tui/src/chatwidget/status_line_command_glue.rs',
-            'tui/src/chatwidget/status_line_command_integration_tests.rs'
-          ) | Where-Object { Test-Path -LiteralPath $_ }
+            'tui/src/chatwidget/status_line_command_integration_tests.rs',
+            'tui/src/status_line_command_smoke.rs'
+          )
+          if ($explicit) {
+            foreach ($file in $files) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'Missing required candidate status-line source' } }
+          } else {
+            if (-not (Test-Path -LiteralPath 'tui/src/status_line_command_smoke.rs' -PathType Leaf)) { Write-Host 'Legacy formatting: diagnostic source unavailable; explicit candidate validation required' }
+            $files = @($files | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+          }
           if (@($files).Count -eq 0) { throw 'No status-line source files found' }
           & rustup run 1.95.0 rustfmt --edition 2024 --check @files
           $nativeExit = $LASTEXITCODE
@@ -667,7 +698,7 @@ jobs:
 
   windows:
     name: Windows (${{ matrix.scope }})
-    needs: plan
+    needs: [plan, quick_checks]
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -858,38 +889,108 @@ jobs:
                 @{id='unknown'; args=@('codexs-smoke','--node',$node,'--formatter',$formatter,'--unknown'); error='SMOKE_ARGS'},
                 @{id='wrong'; args=@('codexs-smoke','--node',$node,'--formatter',$wrong); error='SMOKE_OUTPUT'}
               )
+              # Exact reviewed public contract. Never accept arbitrary SMOKE_* text.
+              $allowedSmokeCodes = @(
+                'SMOKE_ARGS',
+                'SMOKE_ARGS_RUNNER_CLEANUP',
+                'SMOKE_ARGS_DIRECTORY_CLEANUP',
+                'SMOKE_ARGS_RUNNER_AND_DIRECTORY_CLEANUP',
+                'SMOKE_IO',
+                'SMOKE_IO_RUNNER_CLEANUP',
+                'SMOKE_IO_DIRECTORY_CLEANUP',
+                'SMOKE_IO_RUNNER_AND_DIRECTORY_CLEANUP',
+                'SMOKE_ENV',
+                'SMOKE_ENV_RUNNER_CLEANUP',
+                'SMOKE_ENV_DIRECTORY_CLEANUP',
+                'SMOKE_ENV_RUNNER_AND_DIRECTORY_CLEANUP',
+                'SMOKE_TIMEOUT',
+                'SMOKE_TIMEOUT_RUNNER_CLEANUP',
+                'SMOKE_TIMEOUT_DIRECTORY_CLEANUP',
+                'SMOKE_TIMEOUT_RUNNER_AND_DIRECTORY_CLEANUP',
+                'SMOKE_OUTPUT',
+                'SMOKE_OUTPUT_RUNNER_CLEANUP',
+                'SMOKE_OUTPUT_DIRECTORY_CLEANUP',
+                'SMOKE_OUTPUT_RUNNER_AND_DIRECTORY_CLEANUP',
+                'SMOKE_CANCELLED',
+                'SMOKE_CANCELLED_RUNNER_CLEANUP',
+                'SMOKE_CANCELLED_DIRECTORY_CLEANUP',
+                'SMOKE_CANCELLED_RUNNER_AND_DIRECTORY_CLEANUP',
+                'SMOKE_RUNNER',
+                'SMOKE_RUNNER_RUNNER_CLEANUP',
+                'SMOKE_RUNNER_DIRECTORY_CLEANUP',
+                'SMOKE_RUNNER_RUNNER_AND_DIRECTORY_CLEANUP',
+                'SMOKE_RUNNER_CLEANUP',
+                'SMOKE_DIRECTORY_CLEANUP',
+                'SMOKE_RUNNER_AND_DIRECTORY_CLEANUP',
+                'SMOKE_UNSUPPORTED',
+                'SMOKE_RUNTIME'
+              )
               foreach ($case in $cases) {
                 $stdout = Join-Path $probeRoot ($case.id + '.out')
                 $stderr = Join-Path $probeRoot ($case.id + '.err')
                 # All arguments are fixed switches or absolute Windows file paths. Quotes cannot
                 # occur in those filenames; shell metacharacters remain ordinary CreateProcess data.
                 $quoted = @($case.args | ForEach-Object { '"' + $_ + '"' })
-                $process = Start-Process -FilePath $Binary -ArgumentList $quoted -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-                # Hold the process handle while it is running; PS 5.1 otherwise loses ExitCode.
-                $null = $process.Handle
+                $process = $null
+                $exit = $null
+                $failure = $null
+                $clock = [Diagnostics.Stopwatch]::StartNew()
                 try {
-                  $deadline = [DateTime]::UtcNow.AddSeconds(15)
+                  $process = Start-Process -FilePath $Binary -ArgumentList $quoted -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+                  # Hold the owned handle; PS 5.1 otherwise loses ExitCode.
+                  $null = $process.Handle
+                  $deadline = [DateTime]::UtcNow.AddSeconds(25)
                   do {
                     if ((Get-Item -LiteralPath $stdout).Length -gt 4096 -or (Get-Item -LiteralPath $stderr).Length -gt 4096) { throw 'SMOKE_DIAGNOSTIC_LIMIT' }
                     if ([DateTime]::UtcNow -gt $deadline) { throw 'SMOKE_DIAGNOSTIC_TIMEOUT' }
                   } while (-not $process.WaitForExit(50))
                   $process.WaitForExit()
                   $exit = $process.ExitCode
+                  if ((Get-Item -LiteralPath $stdout).Length -gt 4096 -or (Get-Item -LiteralPath $stderr).Length -gt 4096) { throw 'SMOKE_DIAGNOSTIC_LIMIT' }
                   $text = [IO.File]::ReadAllText($stdout)
                   $errorText = [IO.File]::ReadAllText($stderr)
                   if ($case.success) {
                     $expected = '{"schema":1,"runner":"ok","formatter":"ok","cleanup":"ok"}'
                     if ($null -eq $exit -or $exit -ne 0 -or $errorText -ne '' -or $text -cnotin @(($expected+"`n"),($expected+"`r`n"))) { throw 'SMOKE_DIAGNOSTIC_INVALID' }
                   } else {
-                    if ($null -eq $exit -or $exit -eq 0 -or $text -ne '' -or $errorText.Trim() -cnotmatch ('^(?:Error: )?' + $case.error + '$')) { throw 'SMOKE_FAILURE_INVALID' }
+                    if ($null -eq $exit -or $exit -eq 0 -or $text -ne '' -or $errorText -cnotmatch ('\A(?:Error: )?' + $case.error + '(?:\r?\n)?\z')) { throw 'SMOKE_FAILURE_INVALID' }
                   }
+                  foreach ($name in $sentinels.Keys) {
+                    if ([IO.File]::ReadAllText((Join-Path $smokeHome $name)) -cne $sentinels[$name]) { throw 'SMOKE_SENTINEL_CHANGED' }
+                  }
+                } catch {
+                  if ($_.Exception.Message -cin @('SMOKE_DIAGNOSTIC_LIMIT','SMOKE_DIAGNOSTIC_TIMEOUT','SMOKE_DIAGNOSTIC_INVALID','SMOKE_FAILURE_INVALID','SMOKE_SENTINEL_CHANGED')) { $failure = $_ }
+                  else { $failure = [Exception]::new('SMOKE_PROCESS_FAILURE') }
                 } finally {
-                  if (-not $process.HasExited) { $process.Kill(); [void]$process.WaitForExit(5000) }
-                  $process.Dispose()
+                  if ($process) {
+                    try {
+                      if (-not $process.HasExited) {
+                        $process.Kill() # Only this Start-Process handle; the outer Job owns descendants.
+                        if (-not $process.WaitForExit(5000)) { throw 'SMOKE_PROCESS_CLEANUP' }
+                      }
+                      if ($null -eq $exit -and $process.HasExited) { $exit = $process.ExitCode }
+                    } catch { if ($null -eq $failure) { $failure = [Exception]::new('SMOKE_PROCESS_CLEANUP') } }
+                    try { $process.Dispose() }
+                    catch { if ($null -eq $failure) { $failure = [Exception]::new('SMOKE_PROCESS_CLEANUP') } }
+                  }
+                  $clock.Stop()
+                  if ($null -ne $failure) {
+                    # Artifact diagnostics are best effort and never replace the primary failure.
+                    try {
+                      $outBytes = if (Test-Path -LiteralPath $stdout -PathType Leaf) { (Get-Item -LiteralPath $stdout).Length } else { 0 }
+                      $errBytes = if (Test-Path -LiteralPath $stderr -PathType Leaf) { (Get-Item -LiteralPath $stderr).Length } else { 0 }
+                      $code = 'UNKNOWN'
+                      if ($errBytes -gt 0 -and $errBytes -le 4096) {
+                        $diagnostic = [IO.File]::ReadAllText($stderr)
+                        if ($diagnostic -cmatch '\A(?:Error: )?(?<code>SMOKE_[A-Z_]+)(?:\r?\n)?\z' -and $allowedSmokeCodes -ccontains $Matches['code']) { $code = $Matches['code'] }
+                      }
+                      $exitValue = if ($null -eq $exit) { 'unavailable' } else { [int]$exit }
+                      $record = [ordered]@{ case=$case.id; exit_code=$exitValue; elapsed_ms=$clock.ElapsedMilliseconds; stdout_bytes=$outBytes; stderr_bytes=$errBytes; error_code=$code } | ConvertTo-Json -Compress
+                      [IO.File]::AppendAllText((Join-Path $env:CODEXS_LOG_DIR 'smoke-failures.jsonl'),$record+"`n",$utf8)
+                    } catch { } # Never expose private I/O errors or mask the failed gate.
+                  }
                 }
-              }
-              foreach ($name in $sentinels.Keys) {
-                if ([IO.File]::ReadAllText((Join-Path $smokeHome $name)) -cne $sentinels[$name]) { throw 'SMOKE_SENTINEL_CHANGED' }
+                if ($null -ne $failure) { throw $failure }
               }
               Write-Host 'cli_smoke_gate=ok cases=4 synthetic_sentinels=unchanged'
             } finally {

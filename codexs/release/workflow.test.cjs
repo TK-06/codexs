@@ -43,9 +43,11 @@ function execute(name, context = {}, extra = {}, inspect, prelude = '') {
       ...extra,
     };
     for (const [key, [group, field]] of Object.entries(selected.bindings)) env[key] = context[group]?.[field] || '';
-    const encoded = Buffer.from(prelude + '\n' + selected.body, 'utf16le').toString('base64');
+    const script = path.join(directory, 'step.ps1');
+    fs.writeFileSync(script, prelude + '\n' + selected.body);
+    env.CODEXS_TEST_SCRIPT = script;
     const result = spawnSync(path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { env, cwd: root, windowsHide: true, encoding: 'utf8', timeout: 10000 });
+      ['-NoProfile', '-NonInteractive', '-Command', '& ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_TEST_SCRIPT)))'], { env, cwd: root, windowsHide: true, encoding: 'utf8', timeout: 10000 });
     const outputs = fs.existsSync(env.GITHUB_OUTPUT) ? fs.readFileSync(env.GITHUB_OUTPUT, 'utf8').replace(/^\uFEFF/, '') : '';
     if (inspect) inspect({ result, env, outputs });
     return { ...result, outputs };
@@ -433,6 +435,100 @@ test('hosted updater checks preserve a failing Node process despite a positive s
   assert.notEqual(updaterCheck(1, 7).status, 0);
 });
 
+// Keep this exact public contract independent of the implementation's allowlist.
+const smokeCodes = [
+  ...['ARGS', 'IO', 'ENV', 'TIMEOUT', 'OUTPUT', 'CANCELLED', 'RUNNER'].flatMap(primary =>
+    ['', '_RUNNER_CLEANUP', '_DIRECTORY_CLEANUP', '_RUNNER_AND_DIRECTORY_CLEANUP'].map(cleanup => `SMOKE_${primary}${cleanup}`)),
+  'SMOKE_RUNNER_CLEANUP', 'SMOKE_DIRECTORY_CLEANUP', 'SMOKE_RUNNER_AND_DIRECTORY_CLEANUP', 'SMOKE_UNSUPPORTED', 'SMOKE_RUNTIME',
+];
+
+test('quick native probes transport oversized runners through owned files and preserve exits', () => {
+  const quick = step('Verify workflow behavior without compiling Rust').body;
+  const launches = [...quick.matchAll(/^\s*\$env:CODEXS_PROBE_RUNNER_SCRIPT =[^\n]*\n[\s\S]*?^\s*\$exitCode = \$LASTEXITCODE/gm)].map(match => match[0]);
+  assert.equal(launches.length, 3, 'all three quick-probe launch sites must use file transport');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexs-workflow-test-'));
+  try {
+    const fixture = path.join(directory, 'oversized-runner.ps1');
+    fs.writeFileSync(fixture, '# ' + 'x'.repeat(30000) + "\n$LASTEXITCODE=$null\n& powershell.exe -NoProfile -NonInteractive -Command 'exit 7'\nif ($LASTEXITCODE -ne 7) { exit 9 }\n[Console]::Out.WriteLine('synthetic stdout'); exit 7\n");
+    for (const [index, launch] of launches.entries()) {
+      const id = `transport-${index}`;
+      const script = path.join(directory, `${id}.ps1`);
+      fs.writeFileSync(script, "$ErrorActionPreference='Stop'\n$probeRoot=$env:CODEXS_TEST_DIR\n" +
+        `$id='${id}'\n$runner=[IO.File]::ReadAllText($env:CODEXS_TEST_FIXTURE)\n` + launch +
+        "\nif ($exitCode -ne 7) { throw 'Probe exit was not preserved' }\nexit 0\n");
+      const result = spawnSync(path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+        ['-NoProfile', '-NonInteractive', '-Command', '& ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_TEST_SCRIPT)))'],
+        { env: { ...process.env, CODEXS_TEST_SCRIPT: script, CODEXS_TEST_DIR: directory, CODEXS_TEST_FIXTURE: fixture }, windowsHide: true, encoding: 'utf8', timeout: 10000 });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, '');
+      assert.ok(fs.statSync(path.join(directory, `${id}.runner.ps1`)).size > 30000);
+      const bytes = fs.readFileSync(path.join(directory, `${id}.stderr`));
+      const stderr = bytes.toString(bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf16le' : 'utf8');
+      assert.equal(stderr, '');
+    }
+  } finally {
+    if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('codexs-workflow-test-')) throw Error('Unsafe transport test cleanup');
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('native jobs require a validated plan and successful quick checks', () => {
+  // Parse the actual YAML job needs scalars/flow sequences, then evaluate default
+  // GitHub success prerequisites. A failed/skipped quick job must prevent Cargo.
+  const jobs = Object.fromEntries([...source.matchAll(/^  ([a-z_]+):\r?\n([\s\S]*?)(?=^  [a-z_]+:|$(?![\s\S]))/gm)].map(match => {
+    const raw = match[2].match(/^    needs: (.+)$/m)?.[1].trim();
+    const needs = raw ? (raw.startsWith('[') ? raw.slice(1, -1).split(',').map(value => value.trim()) : [raw]) : [];
+    assert.ok(needs.every(value => /^[a-z_]+$/.test(value)), 'unsupported needs syntax');
+    assert.ok(!/^    if:/m.test(match[2]), 'unexpected job condition needs explicit evaluation');
+    return [match[1], needs];
+  }));
+  const runnable = (name, results) => jobs[name].every(need => results[need] === 'success');
+  assert.deepEqual(jobs.quick_checks, ['plan']);
+  assert.deepEqual(jobs.windows, ['plan', 'quick_checks']);
+  assert.equal(runnable('windows', { plan: 'success', quick_checks: 'success' }), true);
+  for (const failure of ['failure', 'cancelled', 'skipped', undefined]) {
+    assert.equal(runnable('windows', { plan: 'success', quick_checks: failure }), false);
+    assert.equal(runnable('windows', { plan: failure, quick_checks: 'success' }), false);
+  }
+});
+
+test('candidate formatting checks every required native file and retains legacy invocations', () => {
+  const files = ['tui/src/status_line_command.rs', 'tui/src/status_line_command_tests.rs',
+    'tui/src/chatwidget/status_line_command_glue.rs', 'tui/src/chatwidget/status_line_command_integration_tests.rs',
+    'tui/src/status_line_command_smoke.rs'];
+  const quick = source.split('\n  quick_checks:')[1].split('\n  windows:')[0];
+  const checkout = quick.match(/      - name: Checkout candidate for formatting\r?\n(?<body>[\s\S]*?)(?=      - name:)/)?.groups.body;
+  assert.ok(checkout, 'selected candidate needs an isolated checkout');
+  assert.match(checkout, /if: needs\.plan\.outputs\.candidate_sha != ''/);
+  assert.match(checkout, /ref: \$\{\{ needs\.plan\.outputs\.candidate_sha \}\}/);
+  assert.match(checkout, /persist-credentials: false/);
+  assert.match(checkout, /path: candidate-format/);
+  const plan = execute('Resolve execution scopes', caller());
+  assert.equal(plan.status, 0, plan.stderr);
+  assert.match(plan.outputs, new RegExp(`candidate_sha=${'a'.repeat(40)}`));
+  for (const missing of [null, ...files, 'wrong-sha', 'legacy']) {
+    const prelude = `
+$ErrorActionPreference='Stop'
+Set-Location -LiteralPath $env:RUNNER_TEMP
+$native = Join-Path $env:RUNNER_TEMP '${missing === 'legacy' ? '' : 'candidate-format/'}codex-rs'
+foreach ($file in @(${files.filter(file => file !== missing && !(missing === 'legacy' && file.endsWith('_smoke.rs'))).map(file => `'${file}'`).join(',')})) {
+  $target=Join-Path $native $file; [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target)); [IO.File]::WriteAllText($target,'synthetic')
+}
+function git { $global:LASTEXITCODE=0; '${missing === 'wrong-sha' ? 'b' : 'a'}' * 40 }
+function rustup { [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'formatter-args.json'),(ConvertTo-Json -InputObject @($args) -Compress)); $global:LASTEXITCODE=0 }
+`;
+    const result = execute('Check status-line Rust formatting', {}, { FORMAT_CANDIDATE_SHA: missing === 'legacy' ? '' : 'a'.repeat(40) }, ({ env, result }) => {
+      const record = path.join(env.RUNNER_TEMP, 'formatter-args.json');
+      if (missing !== null && missing !== 'legacy') { assert.notEqual(result.status, 0); assert.equal(fs.existsSync(record), false); return; }
+      assert.equal(result.status, 0, result.stderr);
+      const args = JSON.parse(fs.readFileSync(record, 'utf8')).map(String);
+      assert.deepEqual(args, ['run', '1.95.0', 'rustfmt', '--edition', '2024', '--check', ...files.filter(file => !(missing === 'legacy' && file.endsWith('_smoke.rs')))]);
+      if (missing === 'legacy') assert.match(result.stdout, /Legacy formatting: diagnostic source unavailable/);
+    }, prelude);
+    if (missing === null || missing === 'legacy') assert.equal(result.status, 0, result.stderr);
+  }
+});
+
 test('built CLI smoke gate rejects bad diagnostics and preserves isolated sentinels', async t => {
   const runner = step('Run guarded native Cargo operation').body.match(/^\$runnerSource = @'\n(?<body>.*?)^'@/ms)?.groups.body;
   const gate = runner?.match(/(?<body>^function Invoke-CodexsSmokeGate \{.*?)(?=^# End codexs smoke gate)/ms)?.groups.body;
@@ -440,8 +536,12 @@ test('built CLI smoke gate rejects bad diagnostics and preserves isolated sentin
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexs-workflow-test-'));
   const ps = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
   const binary = path.join(directory, 'synthetic-cli.exe');
-  const run = (script, extra = {}) => spawnSync(ps, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-    { env: { ...process.env, RUNNER_TEMP: directory, CODEXS_TEST_BINARY: binary, ...extra }, windowsHide: true, encoding: 'utf8', timeout: 25000 });
+  const run = (script, extra = {}) => {
+    const file = path.join(directory, 'probe.ps1');
+    fs.writeFileSync(file, script);
+    return spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', '& ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_TEST_SCRIPT)))'],
+      { env: { ...process.env, CODEXS_TEST_SCRIPT: file, RUNNER_TEMP: directory, CODEXS_LOG_DIR: directory, CODEXS_TEST_BINARY: binary, ...extra }, windowsHide: true, encoding: 'utf8', timeout: 40000 });
+  };
   try {
     const compile = run(String.raw`$ErrorActionPreference='Stop'
 Add-Type -OutputType ConsoleApplication -OutputAssembly $env:CODEXS_TEST_BINARY -TypeDefinition @'
@@ -451,6 +551,11 @@ public class SmokeBoundaryProbe {
   public static int Main(string[] args) {
     string mode = Environment.GetEnvironmentVariable("CODEXS_TEST_SMOKE_MODE");
     File.AppendAllText(Environment.GetEnvironmentVariable("CODEXS_TEST_ARGS"), string.Join("|", args) + "\n");
+    if (mode == "timeout") System.Threading.Thread.Sleep(30000);
+    if (mode == "code") { Console.Error.WriteLine(Environment.GetEnvironmentVariable("CODEXS_TEST_CODE")); return 17; }
+    if (mode == "stderr-cap") { Console.Error.Write(new string('x', 5000)); return 17; }
+    if (mode == "stdout-cap") { Console.Write(new string('x', 5000)); return 17; }
+    if (mode == "private-success") { Console.Error.WriteLine("PRIVATE_CREDENTIAL C:\\private\\payload"); return 17; }
     if (args.Length == 1) {
       Console.Error.WriteLine("SMOKE_ARGS"); return mode == "missing-zero" ? 0 : 1;
     }
@@ -459,6 +564,7 @@ public class SmokeBoundaryProbe {
     }
     string formatter = args[Array.IndexOf(args, "--formatter") + 1];
     if (Path.GetFileName(formatter).StartsWith("wrong")) {
+      if (mode == "malformed-failure") { Console.Error.WriteLine("SMOKE_OUTPUT\n"); return 1; }
       Console.Error.WriteLine(mode == "private-error" ? "private failure with path" : "SMOKE_OUTPUT");
       return mode == "failure-zero" ? 0 : 1;
     }
@@ -473,11 +579,21 @@ public class SmokeBoundaryProbe {
 }
 '@`);
     assert.equal(compile.status, 0, compile.stderr);
-    for (const mode of ['good', 'extra', 'malformed', 'wrong-json', 'nonzero', 'missing-zero', 'unknown-zero', 'failure-zero', 'private-error', 'sentinel-write']) {
+    for (const mode of ['good', 'extra', 'malformed', 'wrong-json', 'nonzero', 'missing-zero', 'unknown-zero', 'failure-zero', 'private-error', 'malformed-failure', 'sentinel-write', 'private-success', 'stdout-cap', 'stderr-cap', 'timeout', 'cleanup-failure', 'cleanup-and-primary', 'start-failure', 'log-failure']) {
       await t.test(mode, () => {
         const record = path.join(directory, `${mode}.args`);
-        const result = run("$ErrorActionPreference='Stop'\n" + gate + '\nInvoke-CodexsSmokeGate $env:CODEXS_TEST_BINARY',
-          { CODEXS_TEST_SMOKE_MODE: mode, CODEXS_TEST_ARGS: record });
+        const log = path.join(directory, 'smoke-failures.jsonl');
+        fs.rmSync(log, { force: true });
+        const cleanup = mode.startsWith('cleanup-') ? `
+function Start-Process {
+  $p=Microsoft.PowerShell.Management\\Start-Process @args
+  $p | Add-Member ScriptMethod Dispose { $this.PSBase.Dispose(); throw 'PRIVATE_CLEANUP' } -Force
+  return $p
+}
+` : mode === 'start-failure' ? "function Start-Process { throw 'PRIVATE_CREDENTIAL C:\\private\\payload' }\n" : '';
+        const result = run("$ErrorActionPreference='Stop'\n" + cleanup + gate + '\nInvoke-CodexsSmokeGate $env:CODEXS_TEST_BINARY',
+          { CODEXS_TEST_SMOKE_MODE: ['log-failure', 'cleanup-and-primary'].includes(mode) ? 'nonzero' : mode, CODEXS_TEST_ARGS: record,
+            ...(mode === 'log-failure' ? { CODEXS_LOG_DIR: path.join(directory, 'absent-log-directory') } : {}) });
         if (mode === 'good') {
           const diagnostic = fs.readdirSync(directory).filter(name => name.startsWith('codexs-smoke-gate-')).flatMap(name =>
             fs.readdirSync(path.join(directory, name)).filter(file => /\.(out|err)$/.test(file)).map(file =>
@@ -489,7 +605,47 @@ public class SmokeBoundaryProbe {
           assert.ok(args[0].includes('|--formatter|'));
           assert.equal(args[1], 'codexs-smoke');
           assert.ok(args[2].endsWith('|--unknown'));
-        } else assert.notEqual(result.status, 0, `gate accepted ${mode}`);
+          assert.equal(fs.existsSync(log), false);
+        } else {
+          assert.notEqual(result.status, 0, `gate accepted ${mode}`);
+          assert.equal(result.error, undefined, 'outer test watchdog must not terminate the gate');
+          assert.ok(!result.stderr.includes('PRIVATE_CREDENTIAL') && !result.stderr.includes('PRIVATE_CLEANUP'));
+          if (mode === 'log-failure') { assert.match(result.stderr, /SMOKE_DIAGNOSTIC_INVALID/); return; }
+          const rows = fs.readFileSync(log, 'utf8').trim().split(/\r?\n/).map(JSON.parse);
+          assert.equal(rows.length, 1);
+          const row = rows[0];
+          assert.deepEqual(Object.keys(row).sort(), ['case', 'elapsed_ms', 'error_code', 'exit_code', 'stderr_bytes', 'stdout_bytes']);
+          assert.ok(['success', 'missing', 'unknown', 'wrong'].includes(row.case));
+          assert.equal(row.case, ['missing-zero'].includes(mode) ? 'missing' : mode === 'unknown-zero' ? 'unknown' : ['failure-zero', 'private-error', 'malformed-failure'].includes(mode) ? 'wrong' : 'success');
+          assert.equal(row.error_code, ['missing-zero', 'unknown-zero'].includes(mode) ? 'SMOKE_ARGS' : mode === 'failure-zero' ? 'SMOKE_OUTPUT' : 'UNKNOWN');
+          assert.ok(row.elapsed_ms >= 0 && row.stdout_bytes >= 0 && row.stderr_bytes >= 0);
+          if (mode === 'nonzero') {
+            assert.equal(row.exit_code, 9);
+            assert.equal(row.stdout_bytes, Buffer.byteLength('{"schema":1,"runner":"ok","formatter":"ok","cleanup":"ok"}\r\n'));
+            assert.equal(row.stderr_bytes, 0);
+          }
+          if (mode === 'stdout-cap') { assert.equal(row.stdout_bytes, 5000); assert.equal(row.stderr_bytes, 0); }
+          if (mode === 'stderr-cap') { assert.equal(row.stdout_bytes, 0); assert.equal(row.stderr_bytes, 5000); }
+          if (mode === 'cleanup-and-primary') { assert.equal(row.exit_code, 9); assert.match(result.stderr, /SMOKE_DIAGNOSTIC_INVALID/); }
+          if (mode === 'cleanup-failure') assert.match(result.stderr, /SMOKE_PROCESS_CLEANUP/);
+          if (mode === 'start-failure') { assert.equal(row.exit_code, 'unavailable'); assert.match(result.stderr, /SMOKE_PROCESS_FAILURE/); }
+          if (mode === 'timeout') { assert.ok(row.elapsed_ms >= 25000 && row.elapsed_ms < 35000); assert.equal(fs.readFileSync(record, 'utf8').trim().split('\n').length, 1); }
+          assert.ok(!fs.readFileSync(log, 'utf8').includes(directory));
+        }
+      });
+    }
+    for (const code of [...smokeCodes, 'SMOKE_CLEANUP', 'SMOKE_OUTPUT_PRIVATE', 'Error: SMOKE_ENV', 'SMOKE_ENV\nPRIVATE_CREDENTIAL', ' SMOKE_ENV', 'SMOKE_ENV\n\n']) {
+      await t.test(`allowlist ${JSON.stringify(code)}`, () => {
+        const log = path.join(directory, 'smoke-failures.jsonl'); fs.rmSync(log, { force: true });
+        const result = run("$ErrorActionPreference='Stop'\n" + gate + '\nInvoke-CodexsSmokeGate $env:CODEXS_TEST_BINARY',
+          { CODEXS_TEST_SMOKE_MODE: 'code', CODEXS_TEST_CODE: code, CODEXS_TEST_ARGS: path.join(directory, 'codes.args') });
+        assert.notEqual(result.status, 0);
+        const row = JSON.parse(fs.readFileSync(log, 'utf8').trim());
+        assert.equal(row.exit_code, 17);
+        assert.equal(row.case, 'success');
+        assert.equal(row.stdout_bytes, 0);
+        assert.equal(row.stderr_bytes, Buffer.byteLength(code + '\r\n'));
+        assert.equal(row.error_code, smokeCodes.includes(code) ? code : code === 'Error: SMOKE_ENV' ? 'SMOKE_ENV' : 'UNKNOWN');
       });
     }
   } finally {
