@@ -126,7 +126,11 @@ pub async fn run_codexs_smoke(node: PathBuf, formatter: PathBuf) -> color_eyre::
     {
         use std::time::Duration;
 
-        if !node.is_absolute() || !formatter.is_absolute() || !node.is_file() || !formatter.is_file() {
+        if !node.is_absolute()
+            || !formatter.is_absolute()
+            || !node.is_file()
+            || !formatter.is_file()
+        {
             color_eyre::eyre::bail!("SMOKE_ARGS");
         }
         // Diagnostic only: reserve the runner's five-second cleanup and two-second Drop fallback
@@ -263,14 +267,16 @@ exit $LASTEXITCODE
         encoded_path(&system_root)?,
     );
     let script_path = owned.join("probe.ps1");
-    std::fs::write(&script_path, script)
-        .map_err(|_| SmokeFailure::new(SmokePrimary::Io))?;
+    std::fs::write(&script_path, script).map_err(|_| SmokeFailure::new(SmokePrimary::Io))?;
     // Keep the cmd.exe command below its length limit even when the supplied paths are long.
     let bootstrap = format!(
         "& ([scriptblock]::Create([IO.File]::ReadAllText([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{}')))))",
         encoded_path(&script_path)?
     );
-    let bytes: Vec<u8> = bootstrap.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let bytes: Vec<u8> = bootstrap
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
     let request = StatusLineCommandRequest {
         config: StatusLineCommandConfig {
             command: format!(
@@ -301,7 +307,11 @@ exit $LASTEXITCODE
         result = &mut run => result,
     };
     let line = result.map_err(SmokeFailure::from_runner)?;
-    let visible: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
+    let visible: String = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
     if visible != "codexs-smoke-ok" {
         return Err(SmokeFailure::new(SmokePrimary::Output));
     }
@@ -484,7 +494,9 @@ function record(child) {{
         ] {
             let failure = SmokeFailure::from_runner(StatusLineCommandError::Cleanup {
                 primary: Some(Box::new(primary)),
-                terminate: Some(std::io::Error::other("private synthetic error must not escape")),
+                terminate: Some(std::io::Error::other(
+                    "private synthetic error must not escape",
+                )),
                 reap: None,
                 timed_out: true,
             });
@@ -615,15 +627,19 @@ setInterval(() => {}, 1000);"#,
             let task = tokio::spawn(supervise_probe(
                 fixture.node.clone(),
                 fixture.formatter.clone(),
-                async move { deadline.await.expect("test explicitly expires the deadline") },
+                async move {
+                    deadline
+                        .await
+                        .expect("test explicitly expires the deadline")
+                },
             ));
             let mut root = None;
             let mut child = None;
             while started.elapsed() < Duration::from_millis(SMOKE_RUNNER_TIMEOUT_MS)
                 && !task.is_finished()
             {
-                root = root
-                    .or_else(|| ExactProcess::read(&fixture.formatter.with_extension("root")));
+                root =
+                    root.or_else(|| ExactProcess::read(&fixture.formatter.with_extension("root")));
                 child = child
                     .or_else(|| ExactProcess::read(&fixture.formatter.with_extension("child")));
                 if root.is_some() && child.is_some() {
@@ -640,7 +656,10 @@ setInterval(() => {}, 1000);"#,
                     .expect("diagnostic recorded its owned directory"),
             );
             assert!(owned.is_dir());
-            assert!(!task.is_finished(), "force the outer deadline on a live probe");
+            assert!(
+                !task.is_finished(),
+                "force the outer deadline on a live probe"
+            );
             expire.send(()).expect("deadline receiver is live");
             let error = task
                 .await
@@ -650,14 +669,20 @@ setInterval(() => {}, 1000);"#,
             // No delay: a completed supervisor must have finished cleanup before runtime drop.
             root.assert_gone();
             child.assert_gone();
-            assert!(!owned.exists(), "owned directory removed before supervisor return");
+            assert!(
+                !owned.exists(),
+                "owned directory removed before supervisor return"
+            );
             (root, child, owned)
         });
         // The standalone CLI drops its runtime immediately after block_on returns.
         drop(runtime);
         root.assert_gone();
         child.assert_gone();
-        assert!(!owned.exists(), "owned directory removed before runtime shutdown");
+        assert!(
+            !owned.exists(),
+            "owned directory removed before runtime shutdown"
+        );
         assert!(started.elapsed() < Duration::from_millis(SMOKE_CONTRACT_BUDGET_MS));
     }
 
@@ -681,8 +706,8 @@ setInterval(() => {}, 1000);"#,
             while started.elapsed() < Duration::from_millis(SMOKE_RUNNER_TIMEOUT_MS)
                 && !task.is_finished()
             {
-                root = root
-                    .or_else(|| ExactProcess::read(&fixture.formatter.with_extension("root")));
+                root =
+                    root.or_else(|| ExactProcess::read(&fixture.formatter.with_extension("root")));
                 child = child
                     .or_else(|| ExactProcess::read(&fixture.formatter.with_extension("child")));
                 if root.is_some() && child.is_some() {
@@ -717,7 +742,10 @@ setInterval(() => {}, 1000);"#,
             while owned.exists() && Instant::now() < deadline {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            assert!(!owned.exists(), "owned directory removed after cancellation");
+            assert!(
+                !owned.exists(),
+                "owned directory removed after cancellation"
+            );
             assert!(started.elapsed() < Duration::from_millis(SMOKE_CONTRACT_BUDGET_MS));
         }
     }
