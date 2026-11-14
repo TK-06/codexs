@@ -183,7 +183,11 @@ async fn run_probe(
         .prefix("codexs-smoke-")
         .tempdir()
         .map_err(|_| SmokeFailure::new(SmokePrimary::Io))?;
+    #[cfg(test)]
+    let started = std::time::Instant::now();
     let result = run_owned_probe(node, formatter, root.path(), cancellation).await;
+    #[cfg(test)]
+    tests::report_probe(root.path(), &result, started.elapsed());
     // Close only after runner cleanup, including on setup errors. Do not retry arbitrary I/O
     // errors: no transient directory-deletion error has been demonstrated.
     finish_probe(result, root.close().is_err())
@@ -266,6 +270,8 @@ exit $LASTEXITCODE
         encoded_path(owned)?,
         encoded_path(&system_root)?,
     );
+    #[cfg(test)]
+    let script = tests::instrument_probe_script(script);
     let script_path = owned.join("probe.ps1");
     std::fs::write(&script_path, script).map_err(|_| SmokeFailure::new(SmokePrimary::Io))?;
     // Keep the cmd.exe command below its length limit even when the supplied paths are long.
@@ -330,6 +336,7 @@ mod tests {
     use super::supervise_probe;
     use crate::status_line_command::StatusLineCommandError;
     use std::fs;
+    use std::io::Read;
     use std::path::Path;
     use std::path::PathBuf;
     use std::time::Duration;
@@ -348,7 +355,76 @@ mod tests {
     use windows_sys::Win32::System::Threading::TerminateProcess;
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
-    struct ExactProcess(HANDLE);
+    // All diagnostics are test-only and accept fixed labels, never paths or fixture contents.
+    pub(super) fn instrument_probe_script(script: String) -> String {
+        script
+            .replace(
+                "foreach ($key in @([Environment]::GetEnvironmentVariables('Process').Keys)) {",
+                "function Write-SmokePhase([string]$phase) {\n\
+                 try { [IO.File]::WriteAllText([IO.Path]::Combine($owned, 'wrapper.phase'), $phase) } catch { }\n\
+                 }\n\
+                 Write-SmokePhase 'wrapper-start'\n\
+                 foreach ($key in @([Environment]::GetEnvironmentVariables('Process').Keys)) {",
+            )
+            .replace(
+                "$env:CCSTATUSLINE_WIDTH = '80'",
+                "$env:CCSTATUSLINE_WIDTH = '80'\nWrite-SmokePhase 'environment-ready'",
+            )
+            .replace(
+                "$payload = [Console]::In.ReadToEnd()",
+                "Write-SmokePhase 'input-read-start'\n\
+                 $payload = [Console]::In.ReadToEnd()\n\
+                 Write-SmokePhase 'input-read-end'",
+            )
+            .replace(
+                "$payload | & $node @arguments",
+                "Write-SmokePhase 'node-start'\n\
+                 $payload | & $node @arguments\n\
+                 Write-SmokePhase 'node-returned'",
+            )
+    }
+
+    fn read_phase(owned: &Path, name: &str) -> &'static str {
+        let file = match fs::File::open(owned.join(name)) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return "missing",
+            Err(_) => return "unreadable",
+        };
+        let mut bytes = Vec::new();
+        if file.take(65).read_to_end(&mut bytes).is_err() {
+            return "unreadable";
+        }
+        match bytes.as_slice() {
+            b"wrapper-start" => "wrapper-start",
+            b"environment-ready" => "environment-ready",
+            b"input-read-start" => "input-read-start",
+            b"input-read-end" => "input-read-end",
+            b"node-start" => "node-start",
+            b"node-returned" => "node-returned",
+            b"formatter-start" => "formatter-start",
+            b"input-complete" => "input-complete",
+            b"output-written" => "output-written",
+            b"identities-recorded" => "identities-recorded",
+            b"formatter-exit" => "formatter-exit",
+            _ => "invalid",
+        }
+    }
+
+    pub(super) fn report_probe(owned: &Path, result: &Result<(), SmokeFailure>, elapsed: Duration) {
+        let code = match result {
+            Ok(()) => "OK".to_string(),
+            Err(failure) => failure.code(),
+        };
+        eprintln!(
+            "codexs_smoke_probe wrapper={} formatter={} result={} elapsed_ms={}",
+            read_phase(owned, "wrapper.phase"),
+            read_phase(owned, "formatter.phase"),
+            code,
+            elapsed.as_millis(),
+        );
+    }
+
+    struct ExactProcess(HANDLE, &'static str);
 
     impl ExactProcess {
         fn read(record: &Path) -> Option<Self> {
@@ -385,11 +461,21 @@ mod tests {
                 unsafe { CloseHandle(handle) };
                 return None;
             }
-            Some(Self(handle))
+            let role = match record.extension().and_then(|extension| extension.to_str()) {
+                Some("root") => "root",
+                Some("child") => "child",
+                _ => "unknown",
+            };
+            Some(Self(handle, role))
         }
 
-        fn assert_gone(&self) {
-            assert_eq!(unsafe { WaitForSingleObject(self.0, 0) }, WAIT_OBJECT_0);
+        fn assert_gone(&self, checkpoint: &'static str) {
+            assert_eq!(
+                unsafe { WaitForSingleObject(self.0, 0) },
+                WAIT_OBJECT_0,
+                "smoke_cleanup role={} checkpoint={checkpoint}",
+                self.1,
+            );
         }
 
         fn assert_live(&self) {
@@ -402,7 +488,7 @@ mod tests {
             {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            self.assert_gone();
+            self.assert_gone("bounded-cleanup");
         }
     }
 
@@ -433,6 +519,11 @@ mod tests {
                 r#"const fs = require('node:fs');
 const path = require('node:path');
 const {{spawn, spawnSync}} = require('node:child_process');
+function smokePhase(phase) {{
+  try {{ fs.writeFileSync(path.join(process.env.CODEX_HOME, 'formatter.phase'), phase); }} catch {{}}
+}}
+smokePhase('formatter-start');
+process.on('exit', () => smokePhase('formatter-exit'));
 function record(child) {{
   const ps = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
   // One bounded query covers both exact processes; the Rust fixture verifies creation times
@@ -444,6 +535,7 @@ function record(child) {{
   if (rows[0].split(' ')[0] !== String(process.pid) || rows[1].split(' ')[0] !== String(child.pid)) process.exit(71);
   fs.writeFileSync(__filename.replace(/\.cjs$/, '.root'), rows[0]);
   fs.writeFileSync(__filename.replace(/\.cjs$/, '.child'), rows[1]);
+  smokePhase('identities-recorded');
 }}
 {body}
 "#
@@ -564,6 +656,26 @@ function record(child) {{
         }
     }
 
+    #[test]
+    fn smoke_phase_diagnostics_are_bounded_and_allowlisted() {
+        let root = tempfile::tempdir().expect("owned diagnostic fixture");
+        assert_eq!(read_phase(root.path(), "wrapper.phase"), "missing");
+        for phase in ["input-read-start", "node-returned", "formatter-exit"] {
+            fs::write(root.path().join("wrapper.phase"), phase).expect("synthetic phase");
+            assert_eq!(read_phase(root.path(), "wrapper.phase"), phase);
+        }
+        for value in [
+            Vec::new(),
+            b"synthetic-private-content".to_vec(),
+            b"node-returned\nextra".to_vec(),
+            vec![b'x'; 1024],
+            vec![0xff],
+        ] {
+            fs::write(root.path().join("wrapper.phase"), value).expect("untrusted phase");
+            assert_eq!(read_phase(root.path(), "wrapper.phase"), "invalid");
+        }
+    }
+
     #[tokio::test]
     async fn smoke_renders_synthetic_footer_without_config() {
         let fixture = Fixture::new(
@@ -571,6 +683,7 @@ function record(child) {{
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
+  smokePhase('input-complete');
   const payload = JSON.parse(input);
   if (!payload.codex || payload.codex.schema !== 1) process.exit(72);
   if (payload.cwd !== process.env.CODEX_HOME || payload.workspace.current_dir !== payload.cwd) process.exit(72);
@@ -583,6 +696,7 @@ process.stdin.on('end', () => {
   for (const key of Object.keys(process.env)) {
     if (/(API_KEY|ACCESS_TOKEN|AUTH_TOKEN|SIGNING_KEY)$/.test(key)) process.exit(76);
   }
+  smokePhase('output-written');
   process.stdout.write('codexs-smoke-ok\n');
 });"#,
         );
@@ -667,8 +781,8 @@ setInterval(() => {}, 1000);"#,
                 .expect_err("expired deadline must fail");
             assert_eq!(error.code(), "SMOKE_TIMEOUT");
             // No delay: a completed supervisor must have finished cleanup before runtime drop.
-            root.assert_gone();
-            child.assert_gone();
+            root.assert_gone("supervisor-return");
+            child.assert_gone("supervisor-return");
             assert!(
                 !owned.exists(),
                 "owned directory removed before supervisor return"
@@ -677,8 +791,8 @@ setInterval(() => {}, 1000);"#,
         });
         // The standalone CLI drops its runtime immediately after block_on returns.
         drop(runtime);
-        root.assert_gone();
-        child.assert_gone();
+        root.assert_gone("runtime-drop");
+        child.assert_gone("runtime-drop");
         assert!(
             !owned.exists(),
             "owned directory removed before runtime shutdown"
