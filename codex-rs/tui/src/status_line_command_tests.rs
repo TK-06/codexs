@@ -1946,6 +1946,16 @@ mod runner_tests {
                 self.pid
             );
         }
+
+        fn assert_gone_immediately(&self) {
+            // This verified handle stays owned by the fixture throughout the nonblocking wait.
+            assert_eq!(
+                unsafe { WaitForSingleObject(self.handle, 0) },
+                WAIT_OBJECT_0,
+                "exact process {} was not signaled when the runner returned",
+                self.pid
+            );
+        }
     }
 
     impl Drop for ExactProcess {
@@ -2280,6 +2290,8 @@ mod runner_tests {
         let (fixture, _cancel, task, root, descendant) = tree_fixture().await;
         fs::write(fixture.path("release"), b"go").expect("release fixture");
         let line = result(task).await.expect("tree fixture should succeed");
+        root.assert_gone_immediately();
+        descendant.assert_gone_immediately();
         assert_eq!(
             line.spans
                 .iter()
@@ -2298,6 +2310,8 @@ mod runner_tests {
             result(task).await,
             Err(StatusLineCommandError::Timeout)
         ));
+        root.assert_gone_immediately();
+        descendant.assert_gone_immediately();
         root.assert_gone();
         descendant.assert_gone();
     }
@@ -2310,6 +2324,8 @@ mod runner_tests {
             result(task).await,
             Err(StatusLineCommandError::Cancelled)
         ));
+        root.assert_gone_immediately();
+        descendant.assert_gone_immediately();
         root.assert_gone();
         descendant.assert_gone();
     }

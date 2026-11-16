@@ -260,9 +260,27 @@ $utf8 = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
 $payload = [Console]::In.ReadToEnd()
-$arguments = @($formatter, '--config', $settings)
-$payload | & $node @arguments
-exit $LASTEXITCODE
+$process = New-Object System.Diagnostics.Process
+$process.StartInfo.FileName = $node
+$process.StartInfo.Arguments = '"' + $formatter + '" --config "' + $settings + '"'
+$process.StartInfo.UseShellExecute = $false
+$process.StartInfo.CreateNoWindow = $true
+$process.StartInfo.RedirectStandardInput = $true
+$process.StartInfo.RedirectStandardOutput = $true
+try {{
+    $started = $process.Start()
+    if (-not $started) {{ throw 'Synthetic formatter did not start' }}
+    $stdoutCopy = $process.StandardOutput.BaseStream.CopyToAsync([Console]::OpenStandardOutput())
+    $bytes = $utf8.GetBytes($payload)
+    $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+    $process.StandardInput.Close()
+    $process.WaitForExit()
+    $null = $stdoutCopy.GetAwaiter().GetResult()
+    $exitCode = $process.ExitCode
+}} finally {{
+    $process.Dispose()
+}}
+exit $exitCode
 "#,
         encoded_path(&node)?,
         encoded_path(&formatter)?,
@@ -377,9 +395,21 @@ mod tests {
                  Write-SmokePhase 'input-read-end'",
             )
             .replace(
-                "$payload | & $node @arguments",
+                "    $started = $process.Start()",
                 "Write-SmokePhase 'node-start'\n\
-                 $payload | & $node @arguments\n\
+                 $started = $process.Start()",
+            )
+            .replace(
+                "    $process.StandardInput.Close()",
+                "$process.StandardInput.Close()\nWrite-SmokePhase 'stdin-closed'",
+            )
+            .replace(
+                "    $process.WaitForExit()",
+                "$process.WaitForExit()\nWrite-SmokePhase 'node-exited'",
+            )
+            .replace(
+                "    $null = $stdoutCopy.GetAwaiter().GetResult()",
+                "$null = $stdoutCopy.GetAwaiter().GetResult()\n\
                  Write-SmokePhase 'node-returned'",
             )
     }
@@ -400,6 +430,8 @@ mod tests {
             b"input-read-start" => "input-read-start",
             b"input-read-end" => "input-read-end",
             b"node-start" => "node-start",
+            b"stdin-closed" => "stdin-closed",
+            b"node-exited" => "node-exited",
             b"node-returned" => "node-returned",
             b"formatter-start" => "formatter-start",
             b"input-complete" => "input-complete",

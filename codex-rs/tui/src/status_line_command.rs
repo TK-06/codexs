@@ -1440,6 +1440,9 @@ struct WindowsCommandOwner<O: WindowsNativeOps> {
     reaped: bool,
     termination_attempted: bool,
     terminate_error: Option<std::io::Error>,
+    termination_started: Option<std::time::Instant>,
+    member_handles: Vec<std::os::windows::io::OwnedHandle>,
+    member_capture_error: Option<std::io::Error>,
 }
 
 #[cfg(windows)]
@@ -1475,6 +1478,9 @@ impl<O: WindowsNativeOps> WindowsCommandOwner<O> {
             reaped: false,
             termination_attempted: false,
             terminate_error: None,
+            termination_started: None,
+            member_handles: Vec::new(),
+            member_capture_error: None,
         }
     }
 
@@ -1526,11 +1532,129 @@ impl<O: WindowsNativeOps> WindowsCommandOwner<O> {
         }
     }
 
+    fn capture_members(&mut self, deadline: std::time::Instant) -> std::io::Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        use std::os::windows::io::FromRawHandle;
+        use std::os::windows::io::OwnedHandle;
+        use windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER;
+        use windows_sys::Win32::Foundation::ERROR_MORE_DATA;
+        use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+        use windows_sys::Win32::System::JobObjects::JOBOBJECT_BASIC_PROCESS_ID_LIST;
+        use windows_sys::Win32::System::JobObjects::JobObjectBasicProcessIdList;
+        use windows_sys::Win32::System::JobObjects::QueryInformationJobObject;
+        use windows_sys::Win32::System::Threading::OpenProcess;
+        use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
+        use windows_sys::Win32::System::Threading::PROCESS_SYNCHRONIZE;
+
+        let Some(job) = self.job.as_ref() else {
+            return Ok(());
+        };
+        let header = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList);
+        let job_handle = job.as_raw_handle().cast();
+        let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE;
+        let mut capacity = 128;
+        while capacity <= 4096 {
+            if std::time::Instant::now() >= deadline {
+                return Err(std::io::Error::other("job member capture timed out"));
+            }
+            let mut storage = vec![0usize; header / std::mem::size_of::<usize>() + capacity];
+            // usize storage supplies the header/list alignment and the full advertised buffer.
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    job_handle,
+                    JobObjectBasicProcessIdList,
+                    storage.as_mut_ptr().cast(),
+                    (storage.len() * std::mem::size_of::<usize>()) as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            if queried == 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(ERROR_MORE_DATA as i32) {
+                    capacity *= 2;
+                    continue;
+                }
+                return Err(error);
+            }
+            // A successful query initialized this header; validate its count before slicing.
+            let list = unsafe { &*storage.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
+            let count = list.NumberOfProcessIdsInList as usize;
+            if count > capacity {
+                return Err(std::io::Error::other("job member list exceeds its buffer"));
+            }
+            if (list.NumberOfAssignedProcesses as usize) > count {
+                capacity *= 2;
+                continue;
+            }
+            // The checked count fits within storage, which stays live throughout this loop.
+            let ids = unsafe {
+                std::slice::from_raw_parts(
+                    storage.as_ptr().add(header / std::mem::size_of::<usize>()),
+                    count,
+                )
+            };
+            for id in ids {
+                if std::time::Instant::now() >= deadline {
+                    return Err(std::io::Error::other("job member capture timed out"));
+                }
+                let pid = u32::try_from(*id)
+                    .map_err(|_| std::io::Error::other("job member ID exceeds u32"))?;
+                // Open for observation only, then revalidate membership to exclude a reused PID.
+                let handle = unsafe { OpenProcess(access, 0, pid) };
+                if handle.is_null() {
+                    let error = std::io::Error::last_os_error();
+                    if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+                        continue; // This enumerated process already exited before OpenProcess.
+                    }
+                    return Err(error);
+                }
+                // OpenProcess transferred one owned handle; every exit path closes it.
+                let process = unsafe { OwnedHandle::from_raw_handle(handle.cast()) };
+                let mut belongs = 0;
+                // Both handles remain valid while the kernel verifies this exact relationship.
+                if unsafe { IsProcessInJob(handle, job_handle, &mut belongs) } == 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if belongs != 0 {
+                    self.member_handles.push(process);
+                }
+            }
+            return Ok(());
+        }
+        Err(std::io::Error::other("job member limit 4096 exceeded"))
+    }
+
+    fn members_exited(&self) -> std::io::Result<bool> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+        for process in &self.member_handles {
+            // Only retained, job-verified handles are observed; no PID is reopened during cleanup.
+            match unsafe { WaitForSingleObject(process.as_raw_handle().cast(), 0) } {
+                WAIT_OBJECT_0 => {}
+                WAIT_TIMEOUT => return Ok(false),
+                _ => return Err(std::io::Error::last_os_error()),
+            }
+        }
+        Ok(true)
+    }
+
     fn terminate_tree(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        self.terminate_tree_before(deadline);
+    }
+
+    fn terminate_tree_before(&mut self, deadline: std::time::Instant) {
         if self.termination_attempted {
             return;
         }
         self.termination_attempted = true;
+        self.termination_started = Some(std::time::Instant::now());
+        if let Err(error) = self.capture_members(deadline) {
+            self.member_capture_error = Some(error);
+        }
         if let Some(job) = self.job.as_ref()
             && let Err(error) = self.ops.terminate(job)
         {
@@ -1555,8 +1679,11 @@ impl<O: WindowsNativeOps> WindowsCommandOwner<O> {
         primary: Option<StatusLineCommandError>,
     ) -> Result<(), StatusLineCommandError> {
         self.terminate_tree();
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-        let mut reap_error = None;
+        let deadline = tokio::time::Instant::from_std(
+            self.termination_started.expect("termination has started")
+                + std::time::Duration::from_secs(5),
+        );
+        let mut reap_error = self.member_capture_error.take();
         let mut timed_out = false;
         if !self.reaped
             && let Some(child) = self.child.as_mut()
@@ -1564,7 +1691,7 @@ impl<O: WindowsNativeOps> WindowsCommandOwner<O> {
             match tokio::time::timeout_at(deadline, self.ops.wait(child)).await {
                 Ok(Ok(_)) => self.reaped = true,
                 Ok(Err(error)) => {
-                    reap_error = Some(error);
+                    Self::append_error(&mut reap_error, error);
                     match child.try_wait() {
                         Ok(Some(_)) => self.reaped = true,
                         Ok(None) => {
@@ -1601,8 +1728,11 @@ impl<O: WindowsNativeOps> WindowsCommandOwner<O> {
             );
         }
         loop {
-            match self.active_processes() {
-                Ok(0) => break,
+            match self
+                .active_processes()
+                .and_then(|active| self.members_exited().map(|exited| (active, exited)))
+            {
+                Ok((0, true)) => break,
                 Ok(_) if tokio::time::Instant::now() < deadline => {
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 }
@@ -1610,7 +1740,7 @@ impl<O: WindowsNativeOps> WindowsCommandOwner<O> {
                     timed_out = true;
                     Self::append_error(
                         &mut reap_error,
-                        std::io::Error::other("job still has active processes"),
+                        std::io::Error::other("job processes have not fully exited"),
                     );
                     break;
                 }
@@ -1622,6 +1752,7 @@ impl<O: WindowsNativeOps> WindowsCommandOwner<O> {
         }
         if self.reaped && !timed_out && reap_error.is_none() {
             self.child.take();
+            self.member_handles.clear();
             self.job.take();
         }
         let terminate = self.terminate_error.take();
@@ -1646,11 +1777,11 @@ impl<O: WindowsNativeOps> Drop for WindowsCommandOwner<O> {
         if self.job.is_none() && self.child.is_none() {
             return;
         }
-        self.terminate_tree();
-        self.kill_root();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        self.terminate_tree_before(deadline);
+        self.kill_root();
         let mut reaped = self.reaped || self.child.is_none();
-        let mut empty = self.job.is_none();
+        let mut empty = self.job.is_none() && self.member_handles.is_empty();
         while std::time::Instant::now() < deadline && (!reaped || !empty) {
             if !reaped && let Some(child) = self.child.as_mut() {
                 match child.try_wait() {
@@ -1663,8 +1794,11 @@ impl<O: WindowsNativeOps> Drop for WindowsCommandOwner<O> {
                 }
             }
             if !empty {
-                match self.active_processes() {
-                    Ok(0) => empty = true,
+                match self
+                    .active_processes()
+                    .and_then(|active| self.members_exited().map(|exited| (active, exited)))
+                {
+                    Ok((0, true)) => empty = true,
                     Ok(_) => {}
                     Err(error) => {
                         tracing::error!("status-line job query during Drop failed: {error}");
@@ -1683,6 +1817,9 @@ impl<O: WindowsNativeOps> Drop for WindowsCommandOwner<O> {
         }
         if let Some(error) = self.terminate_error.as_ref() {
             tracing::error!("status-line termination during Drop failed: {error}");
+        }
+        if let Some(error) = self.member_capture_error.as_ref() {
+            tracing::error!("status-line job member capture during Drop failed: {error}");
         }
         // A failed terminate still has kill-on-last-close as the final tree stop.
         self.child.take();
