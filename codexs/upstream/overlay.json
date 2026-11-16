@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "base_sha": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
-  "accepted_sha": "7d032f29d8a2fa51c4351de135073881e786dbfd",
-  "patch_sha256": "a9ba81c8e9cf7322510abb4404bc852da1baabc986540727a6b292ec1a549153",
+  "accepted_sha": "af0022107184d679945219381c29453d9117a039",
+  "patch_sha256": "38288f8f44e9f732a44aa09c3af0e29d2b71175b03822cd22d95bceb0ec46e8b",
   "paths": [
     "codex-rs/Cargo.lock",
     "codex-rs/cli/src/main.rs",
