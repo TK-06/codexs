@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "base_sha": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
-  "accepted_sha": "af0022107184d679945219381c29453d9117a039",
-  "patch_sha256": "38288f8f44e9f732a44aa09c3af0e29d2b71175b03822cd22d95bceb0ec46e8b",
+  "accepted_sha": "551e7205dd94d4cbe8e02bf9e4c9974994066a0c",
+  "patch_sha256": "fc72e46976e4615b4999bae6349a1543ec18dd7581ec805b51ed8b88f06b072e",
   "paths": [
     "codex-rs/Cargo.lock",
     "codex-rs/cli/src/main.rs",
@@ -10,6 +10,8 @@
     "codex-rs/config/src/project_trust_tests.rs",
     "codex-rs/tui/Cargo.toml",
     "codex-rs/tui/src/app.rs",
+    "codex-rs/tui/src/app/agent_center/rows.rs",
+    "codex-rs/tui/src/app/agents_overview_tests.rs",
     "codex-rs/tui/src/app/config_persistence.rs",
     "codex-rs/tui/src/app/daemon_menu.rs",
     "codex-rs/tui/src/app/daemon_menu_tests.rs",
