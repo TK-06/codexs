@@ -260,7 +260,7 @@ $utf8 = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
 $payload = [Console]::In.ReadToEnd()
-$process = New-Object System.Diagnostics.Process
+$process = [Diagnostics.Process]::new()
 $process.StartInfo.FileName = $node
 $process.StartInfo.Arguments = '"' + $formatter + '" --config "' + $settings + '"'
 $process.StartInfo.UseShellExecute = $false
@@ -297,6 +297,9 @@ exit $exitCode
         "& ([scriptblock]::Create([IO.File]::ReadAllText([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{}')))))",
         encoded_path(&script_path)?
     );
+    // Set the test policy before compiling the wrapper, so discovery cannot warm its commands.
+    #[cfg(test)]
+    let bootstrap = format!("$PSModuleAutoLoadingPreference = 'None'; {bootstrap}");
     let bytes: Vec<u8> = bootstrap
         .encode_utf16()
         .flat_map(u16::to_le_bytes)

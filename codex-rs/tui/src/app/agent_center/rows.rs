@@ -84,7 +84,11 @@ impl AgentsOverviewView {
                 .right_aligned()
                 .render(updated, buf);
         }
+        #[cfg(not(test))]
         let reference = chrono::Utc::now();
+        #[cfg(test)]
+        let reference = crate::app::agents_overview::tests::snapshot_render_reference()
+            .unwrap_or_else(chrono::Utc::now);
         let height = usize::from(viewport.height);
         state.page_height = height;
         let mut start = state.scroll.min(entries.len().saturating_sub(height));

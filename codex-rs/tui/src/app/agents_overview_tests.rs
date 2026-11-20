@@ -163,6 +163,61 @@ use ratatui::style::Style;
 static OVERVIEW_TIMESTAMP: std::sync::LazyLock<i64> =
     std::sync::LazyLock::new(|| chrono::Utc::now().timestamp() - 120);
 
+std::thread_local! {
+    static SNAPSHOT_RENDER_REFERENCE: std::cell::Cell<Option<chrono::DateTime<chrono::Utc>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+pub(in crate::app) fn snapshot_render_reference() -> Option<chrono::DateTime<chrono::Utc>> {
+    SNAPSHOT_RENDER_REFERENCE.with(std::cell::Cell::get)
+}
+
+fn with_snapshot_render_reference<T>(
+    reference: chrono::DateTime<chrono::Utc>,
+    render: impl FnOnce() -> T,
+) -> T {
+    struct RestoreReference(Option<chrono::DateTime<chrono::Utc>>);
+
+    impl Drop for RestoreReference {
+        fn drop(&mut self) {
+            SNAPSHOT_RENDER_REFERENCE.with(|value| value.set(self.0));
+        }
+    }
+
+    let previous = SNAPSHOT_RENDER_REFERENCE.with(|value| value.replace(Some(reference)));
+    let _restore_reference = RestoreReference(previous);
+    render()
+}
+
+#[tokio::test]
+async fn overview_snapshot_clock_is_scoped_to_each_render() {
+    let mut app = make_test_app().await;
+    let mut thread = overview_thread(
+        ThreadId::new(),
+        /*parent_thread_id*/ None,
+        "Synthetic clock fixture",
+        ThreadStatus::Idle,
+    );
+    thread.updated_at = 1_700_000_000;
+    let view = app.agents_overview_view(vec![thread], /*selected_thread_id*/ None);
+    app.chat_widget.show_bottom_pane_view(Box::new(view));
+    let reference =
+        chrono::DateTime::from_timestamp(1_700_000_120, 0).expect("synthetic reference time");
+    let later =
+        chrono::DateTime::from_timestamp(1_700_000_180, 0).expect("later synthetic reference time");
+
+    let width = 160;
+    assert_eq!(snapshot_render_reference(), None);
+    with_snapshot_render_reference(reference, || {
+        assert!(render_bottom_popup(&app.chat_widget, width).contains("2m ago"));
+        with_snapshot_render_reference(later, || {
+            assert!(render_bottom_popup(&app.chat_widget, width).contains("3m ago"));
+        });
+        assert!(render_bottom_popup(&app.chat_widget, width).contains("2m ago"));
+    });
+    assert_eq!(snapshot_render_reference(), None);
+}
+
 #[tokio::test]
 async fn overview_right_opens_current_or_highlighted_task() {
     let mut app = make_test_app().await;
@@ -1146,6 +1201,8 @@ async fn agents_overview_reasoning_uses_existing_events_and_expires_with_attachm
 #[tokio::test]
 async fn worktrees_overview_groups_by_project_or_directory() {
     let mut app = make_test_app().await;
+    let reference =
+        chrono::DateTime::from_timestamp(1_700_000_120, 0).expect("synthetic reference time");
     let root = tempfile::tempdir().unwrap();
     let primary = root.path().join("primary");
     let linked = root.path().join("linked");
@@ -1191,6 +1248,9 @@ async fn worktrees_overview_groups_by_project_or_directory() {
             ThreadStatus::Idle,
         );
         thread.cwd = AbsolutePathBuf::from_absolute_path(cwd).unwrap();
+        thread.created_at = 1_700_000_000;
+        thread.updated_at = 1_700_000_000;
+        thread.recency_at = Some(1_700_000_000);
         thread
     })
     .collect::<Vec<_>>();
@@ -1213,7 +1273,9 @@ async fn worktrees_overview_groups_by_project_or_directory() {
     let width = 160;
     let view = app.agents_overview_view(threads, /*selected_thread_id*/ None);
     app.chat_widget.show_bottom_pane_view(Box::new(view));
-    let project_popup = render_bottom_popup(&app.chat_widget, width);
+    let project_popup = with_snapshot_render_reference(reference, || {
+        render_bottom_popup(&app.chat_widget, width)
+    });
     let project_root = primary.join("");
     let project_headings = [
         (&project_root, "/tmp/worktree-root/primary"),
@@ -1247,7 +1309,9 @@ async fn worktrees_overview_groups_by_project_or_directory() {
     }
     let project_grouping = project_grouping.replace('\\', "/");
     app.agents_overview.view_state.lock().unwrap().grouping = AgentsOverviewGrouping::Directory;
-    let directory_popup = render_bottom_popup(&app.chat_widget, width);
+    let directory_popup = with_snapshot_render_reference(reference, || {
+        render_bottom_popup(&app.chat_widget, width)
+    });
     for (heading, _) in &directory_headings[..2] {
         assert!(
             directory_popup.contains(&format!("{heading}  2")),
