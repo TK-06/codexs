@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { fixtureTempRoot } = require('../test-support/update-fixtures.cjs');
 
 const root = path.resolve(__dirname, '../..');
 const source = fs.readFileSync(path.join(root, '.github/workflows/codexs-statusline.yml'), 'utf8');
@@ -679,7 +680,8 @@ function New-Object {
 });
 
 test('actual quick gates discover launcher suites and propagate every PowerShell suite failure',()=>{
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'codexs-workflow-test-'));
+  const tempRoot=fixtureTempRoot();
+  const directory=fs.mkdtempSync(path.join(tempRoot,'codexs-workflow-test-'));
   const names=['release/check-tests','upstream/upstream','release/workflow','update/protocol','update/paths','update/bootstrap','update/launch','update/http','update/state','update/stage'];
   try{
     for(const name of names){const file=path.join(directory,'codexs',name+'.test.cjs');fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'// synthetic discovery fixture\n');}
@@ -705,7 +707,7 @@ test('actual quick gates discover launcher suites and propagate every PowerShell
       if(removed)fs.writeFileSync(removed,'// synthetic discovery fixture\n');
     }
   }finally{
-    if(path.dirname(directory)!==path.resolve(os.tmpdir())||!path.basename(directory).startsWith('codexs-workflow-test-'))throw Error('Unsafe gate-fixture cleanup');
+    if(path.dirname(directory)!==tempRoot||!path.basename(directory).startsWith('codexs-workflow-test-'))throw Error('Unsafe gate-fixture cleanup');
     fs.rmSync(directory,{recursive:true});
   }
 });

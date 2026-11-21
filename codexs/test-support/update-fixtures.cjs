@@ -71,15 +71,20 @@ function installationState() {
 
 module.exports = { upstreamRelease, upstreamPackages, footerOverlay, releaseManifest, installationState };
 
+function fixtureTempRoot() {
+  return require('node:fs').realpathSync.native(require('node:os').tmpdir());
+}
+module.exports.fixtureTempRoot = fixtureTempRoot;
+
 async function launchInstallation(t, { special = false } = {}) {
   const fs = require('node:fs/promises');
   const path = require('node:path');
-  const os = require('node:os');
   const { generateKeyPairSync, sign } = require('node:crypto');
   const { encodeRelease } = require('../update/protocol.cjs');
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), special ? 'codexs-launch-test-สี %CODEXS_TRIPWIRE%! caret^ & (x)-' : 'codexs-launch-test-'));
+  const tempRoot = fixtureTempRoot();
+  const root = await fs.mkdtemp(path.join(tempRoot, special ? 'codexs-launch-test-สี %CODEXS_TRIPWIRE%! caret^ & (x)-' : 'codexs-launch-test-'));
   t.after(async () => {
-    if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('codexs-launch-test-')) throw Error('Unsafe launch test cleanup');
+    if (path.dirname(root) !== tempRoot || !path.basename(root).startsWith('codexs-launch-test-')) throw Error('Unsafe launch test cleanup');
     await fs.rm(root, { recursive: true, maxRetries: 10, retryDelay: 100 });
   });
   const keys = generateKeyPairSync('ed25519');

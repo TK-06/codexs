@@ -713,3 +713,49 @@ test('old footer callbacks keep their authenticated formatter after promotion an
     assert.equal(Buffer.concat(stderr).toString(),'independent');
   }
 });
+
+test('aliased TEMP preserves actual probe isolation and owned fixture cleanup',{timeout:45000},async t=>{
+  const {promisify}=require('node:util'),execute=promisify(require('node:child_process').execFile);
+  const tempRoot=require('node:fs').realpathSync.native(require('node:os').tmpdir());
+  const parent=await fs.mkdtemp(path.join(tempRoot,'codexs-temp-alias-test-'));
+  t.after(async()=>{
+    if(path.dirname(parent)!==tempRoot || !path.basename(parent).startsWith('codexs-temp-alias-test-'))throw Error('Unsafe alias fixture cleanup');
+    await fs.rm(parent,{recursive:true,maxRetries:10,retryDelay:100});
+  });
+  const ps=path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
+  const script="$ErrorActionPreference='Stop';$folder=(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:CODEXS_ALIAS_PARENT);[Console]::Out.WriteLine([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($folder.ShortPath)))";
+  const short=await execute(ps,['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{env:{...process.env,CODEXS_ALIAS_PARENT:parent},windowsHide:true,timeout:10000});
+  let alias=Buffer.from(short.stdout.trim(),'base64').toString('utf8');
+  const shortAlias=alias.toLowerCase()!==parent.toLowerCase();
+  // A case alias keeps this regression executable on volumes with new 8.3 names disabled.
+  if(!shortAlias)alias=path.join(path.dirname(parent),path.basename(parent).toUpperCase());
+  assert.notEqual(alias,parent,'regression must use a distinct path spelling');
+  assert.equal(await fs.realpath(alias),parent,'alias must resolve to the owned physical directory');
+  const driver=path.join(parent,'probe.cjs');
+  const program=[
+    "'use strict';",
+    "const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path');",
+    "const helper=require(process.argv[2]),update=path.join(path.dirname(process.argv[2]),'..','update'),cleanups=[];",
+    "(async()=>{let fixtureRoot;",
+    "try{const f=await helper.probeInstallation({after:fn=>cleanups.push(fn)});fixtureRoot=f.root;",
+    "const a=await f.install(),verifiedRelease=await require(path.join(update,'bootstrap.cjs')).verifyInstalledRelease({root:f.root,releaseRef:a.ref},{publicKey:f.publicKey});",
+    "const ports=require(path.join(update,'launch.cjs')).createUpdatePorts({verifiedRelease},{root:f.root,config:f.config});",
+    "const paths={node:process.execPath,native:path.join(a.directory,'bin/codex.exe'),formatter:path.join(a.directory,'formatter/dist/ccstatusline.js')};",
+    "assert.deepEqual(await ports.probeVersion(paths),{native:'0.166.0',formatter:'2.2.32'});await ports.smoke(paths);",
+    "const row=(await fs.readFile(path.join(f.root,'probe-record'),'utf8')).trim().split(/\\r?\\n/),decode=value=>Buffer.from(value,'base64').toString('utf8'),cwd=decode(row[0]);",
+    "assert.ok(cwd.startsWith(path.join(f.root,'probes')+path.sep),'actual probe cwd must stay in the fixture probe directory');",
+    "assert.equal(decode(row[1]),cwd);assert.equal(decode(row[2]),cwd);assert.equal(row[3],'False');",
+    "assert.equal(path.dirname(f.root),require('node:fs').realpathSync.native(require('node:os').tmpdir()));",
+    "}finally{for(const cleanup of cleanups.reverse())await cleanup();}",
+    "await assert.rejects(fs.stat(fixtureRoot),{code:'ENOENT'},'fixture cleanup must remove its owned directory');",
+    "console.log(JSON.stringify({probe_isolated:true,cleanup:true}));",
+    "})().catch(error=>{console.error(error.stack);process.exitCode=1;});",
+  ].join('\n');
+  await fs.writeFile(driver,program);
+  const env={...process.env,TEMP:alias,TMP:alias,SYNTHETIC_SECRET:'alias-proof-private-sentinel'};delete env.NODE_TEST_CONTEXT;
+  let result;
+  try{result=await execute(process.execPath,[driver,path.join(__dirname,'..','test-support/update-fixtures.cjs')],{env,windowsHide:true,timeout:30000,maxBuffer:1048576});}
+  catch(error){assert.fail('aliased TEMP probe failed: '+error.stderr);}
+  assert.deepEqual(JSON.parse(result.stdout.trim()),{probe_isolated:true,cleanup:true});
+  t.diagnostic('TEMP alias exercised: '+(shortAlias?'8.3':'case'));
+});
