@@ -4,8 +4,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { TextDecoder } = require('node:util');
-const { UpdateError, verifyRelease, encodeRelease, assertFresh } = require('./protocol.cjs');
-const { resolveOwned, validateInventory } = require('./paths.cjs');
+const { UpdateError, verifyRelease, encodeRelease, assertFresh, parseState } = require('./protocol.cjs');
+const { resolveOwned, validateInventory, readBoundedFile, verifyInventory, hashFile: fileHash } = require('./paths.cjs');
 const { transition, readInstallation } = require('./state.cjs');
 const { fetchStableRelease, downloadAsset } = require('./http.cjs');
 
@@ -15,7 +15,8 @@ const fail = code => { throw new UpdateError(code); };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const refFor = (release, bytes) => ({ release_id: release.release_id, sequence: release.sequence, manifest_sha256: digest(bytes) });
 const same = (a, b) => a && b && a.release_id === b.release_id && a.sequence === b.sequence && a.manifest_sha256 === b.manifest_sha256;
-const bounded = (error, fallback = 'STAGE_IO') => error instanceof UpdateError ? error : new UpdateError(fallback);
+const bounded = (error, fallback = 'STAGE_IO') => error instanceof UpdateError ? error
+  : new UpdateError(error && error.name==='UpdateError' && typeof error.code==='string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code) ? error.code : fallback);
 // Only a wrong visible result identifies a bad formatter. Host I/O, cancellation, cleanup and
 // scheduling timeouts still block readiness but must not permanently blacklist a signed release.
 const deterministic = error => /^(STAGE_(INVENTORY|PACKAGE|ARCHITECTURE|VERSION)|SMOKE_OUTPUT|ARCHIVE_[A-Z0-9_]+|SIGNATURE|MANIFEST_(MISMATCH|SCHEMA))$/.test(error.code);
@@ -32,23 +33,6 @@ function authenticate(input, ports) {
   return { release, ref: refFor(release, input.manifestBytes) };
 }
 
-async function fileHash(file, bytes, code) {
-  const info = await fs.lstat(file).catch(error => { if (error.code === 'ENOENT') fail(code); throw error; });
-  if (!info.isFile() || info.isSymbolicLink() || info.size !== bytes) fail(code);
-  const handle = await fs.open(file, 'r');
-  try {
-    const hash = createHash('sha256');
-    let total = 0;
-    for await (const chunk of handle.createReadStream({ autoClose: false })) {
-      total += chunk.length;
-      if (total > bytes) fail(code);
-      hash.update(chunk);
-    }
-    if (total !== bytes) fail(code);
-    return hash.digest('hex');
-  } finally { await handle.close(); }
-}
-
 // Reserved sidecars are updater-owned constants, never payload inventory names. Validate their
 // parent and ancestry through resolveOwned, then inspect the fixed leaf without weakening paths.cjs.
 function sidecar(root, name) {
@@ -56,47 +40,8 @@ function sidecar(root, name) {
   return path.join(root, name);
 }
 
-async function readSmall(file, max = 4 * 1024 * 1024) {
-  const info = await fs.lstat(file).catch(error => { if (error.code === 'ENOENT') fail('STAGE_INVENTORY'); throw error; });
-  if (!info.isFile() || info.isSymbolicLink() || info.size > max) fail('STAGE_INVENTORY');
-  const bytes = await fs.readFile(file);
-  if (bytes.length > max) fail('STAGE_INVENTORY');
-  return bytes;
-}
-
-async function inventory(root, release, installed = false) {
-  resolveOwned(root, 'ancestry-check');
-  const expected = new Map(release.files.map(file => [file.path, file]));
-  const directories = new Set();
-  for (const file of release.files) {
-    const parts = file.path.split('/');
-    for (let i = 1; i < parts.length; i++) directories.add(parts.slice(0, i).join('/'));
-  }
-  const seen = new Set();
-  async function walk(relative = '') {
-    const entries = await fs.readdir(relative ? resolveOwned(root, relative) : root, { withFileTypes: true })
-      .catch(error => { if (error.code === 'ENOENT') fail('STAGE_INVENTORY'); throw error; });
-    for (const entry of entries) {
-      const name = relative ? `${relative}/${entry.name}` : entry.name;
-      if (installed && relative === '' && ['release.json', 'release.sig'].includes(name)) {
-        if (!entry.isFile() || entry.isSymbolicLink()) fail('STAGE_INVENTORY');
-        continue;
-      }
-      if (entry.isSymbolicLink()) fail('STAGE_INVENTORY');
-      if (entry.isDirectory()) {
-        if (!directories.has(name)) fail('STAGE_INVENTORY');
-        await walk(name);
-      } else {
-        const file = expected.get(name);
-        if (!entry.isFile() || !file || seen.has(name)) fail('STAGE_INVENTORY');
-        if (await fileHash(resolveOwned(root, name), file.bytes, 'STAGE_INVENTORY') !== file.sha256) fail('STAGE_INVENTORY');
-        seen.add(name);
-      }
-    }
-  }
-  await walk();
-  if (seen.size !== expected.size) fail('STAGE_INVENTORY');
-}
+const readSmall = (file, max = 4 * 1024 * 1024) => readBoundedFile(file, { maxBytes: max, code: 'STAGE_INVENTORY' });
+const inventory = (root, release, installed = false) => verifyInventory(root, release.files, { installed, code: 'STAGE_INVENTORY' });
 
 async function json(root, name) {
   const bytes = await readSmall(resolveOwned(root, name));
@@ -209,7 +154,12 @@ async function stageRelease(input, ports) {
 async function runUpdate({ mode, root, request }, ports) {
   capability(ports);
   if (!['check', 'promote', 'rollback'].includes(mode) || !request || typeof request !== 'object' ||
-      Array.isArray(request) || Object.getPrototypeOf(request) !== Object.prototype || Object.keys(request).length) fail('UPDATE_INPUT');
+      Array.isArray(request) || Object.getPrototypeOf(request) !== Object.prototype ||
+      (Object.keys(request).length && !(mode==='rollback' && Object.keys(request).join(',')==='expectedCurrent'))) fail('UPDATE_INPUT');
+  if(Object.hasOwn(request,'expectedCurrent')){
+    const ref=request.expectedCurrent;
+    try{parseState(encodeRelease({schema:1,current:ref,previous:null,ready:null,highest:ref?{sequence:ref.sequence,manifest_sha256:ref.manifest_sha256}:null,rejected:[],last_check_ms:0,next_check_ms:0,failures:0}));}catch{fail('UPDATE_INPUT');}
+  }
   resolveOwned(root, 'current.json');
   let state, changed = false;
   const result = code => ({ code, stateChanged: changed });
@@ -220,9 +170,10 @@ async function runUpdate({ mode, root, request }, ports) {
   }
   try {
     ({ state } = await (ports.readState || readInstallation)(root));
+    if(mode==='rollback' && Object.hasOwn(request,'expectedCurrent') && !(state.current===null&&request.expectedCurrent===null || same(state.current,request.expectedCurrent)))return result('STATE_CHANGED');
     if (mode !== 'check') {
       const ref = mode === 'promote' ? state.ready : state.previous;
-      if (!ref) return result(mode === 'promote' ? 'NO_READY' : 'NO_PREVIOUS');
+      if (!ref || mode==='rollback' && same(ref,state.current)) return result(mode === 'promote' ? 'NO_READY' : 'NO_PREVIOUS');
       await settingsCompatible(ports);
       if (state.rejected.includes(ref.release_id)) fail('REJECTED_RELEASE');
       try { await verifyInstalled(root, ref, ports); }
@@ -256,6 +207,7 @@ async function runUpdate({ mode, root, request }, ports) {
       }
       trusted = authenticate(feed, ports);
       assertFresh(trusted.release, trusted.ref.manifest_sha256, state);
+      if(same(state.current,trusted.ref)){await persist(transition(state,{type:'check-finished',nowMs,result:'ok'}));return result('UNCHANGED');}
       await persist(transition(state, { type: 'manifest-seen', ref: trusted.ref }));
       const ref = await stageRelease({ root, release: trusted.release, manifestBytes: feed.manifestBytes, signature: feed.signature }, { ...ports, assetId: feed.assetId });
       await persist(transition(transition(state, { type: 'stage-ready', ref }), { type: 'check-finished', nowMs, result: 'ok' }));

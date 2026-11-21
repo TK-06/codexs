@@ -677,3 +677,35 @@ function New-Object {
     fs.rmSync(directory, { recursive: true });
   }
 });
+
+test('actual quick gates discover launcher suites and propagate every PowerShell suite failure',()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'codexs-workflow-test-'));
+  const names=['release/check-tests','upstream/upstream','release/workflow','update/protocol','update/paths','update/bootstrap','update/launch','update/http','update/state','update/stage'];
+  try{
+    for(const name of names){const file=path.join(directory,'codexs',name+'.test.cjs');fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'// synthetic discovery fixture\n');}
+    for(const suite of ['archive','coordinator','enroll']){
+      fs.writeFileSync(path.join(directory,'codexs/update',suite+'.Tests.ps1'),"if($env:CODEXS_SYNTHETIC_FAIL -ceq '"+suite+"'){throw 'SYNTHETIC_SUITE_FAILURE'};if($env:CODEXS_SYNTHETIC_FAIL -cne 'empty-"+suite+"'){Write-Output ('"+({archive:'Archive',coordinator:'Coordinator',enroll:'Enrollment'}[suite])+" assertions: 1 passed; 0 failed')}\n");
+    }
+    fs.writeFileSync(path.join(directory,'codexs/install.Tests.ps1'),"param($InstallerPath)\nif($env:CODEXS_SYNTHETIC_FAIL -ceq 'legacy'){throw 'SYNTHETIC_SUITE_FAILURE'};if($env:CODEXS_SYNTHETIC_FAIL -cne 'empty-legacy'){Write-Output ('Installer assertions: 1 passed; 0 failed')}\n");
+    const log=path.join(directory,'node-args');
+    const node="function node { [IO.File]::WriteAllText($env:CODEXS_SYNTHETIC_NODE_ARGS,($args -join [Environment]::NewLine));Write-Output '# tests 1';Write-Output ('# codexs verified suites '+(@($args).Count-1));$global:LASTEXITCODE=0 }\n";
+    const body=node+step('Check isolated codexs installer').body+'\n'+step('Check isolated update modules').body;
+    for(const failure of ['none','archive','coordinator','enroll','legacy','empty-archive','empty-coordinator','empty-enroll','empty-legacy','missing-launch','missing-http','missing-state','missing-stage']){
+      const removed=failure.startsWith('missing-')?path.join(directory,'codexs/update',failure.slice(8)+'.test.cjs'):null;
+      if(removed)fs.unlinkSync(removed);
+      const result=spawnSync(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),
+        ['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(body,'utf16le').toString('base64')],
+        {cwd:directory,env:{...process.env,CODEXS_SYNTHETIC_FAIL:failure,CODEXS_SYNTHETIC_NODE_ARGS:log},windowsHide:true,encoding:'utf8',timeout:10000});
+      if(failure==='none'){
+        assert.equal(result.status,0,result.stderr);
+        for(const suite of ['archive','coordinator','enroll','legacy'])assert.ok(result.stdout.includes(({archive:'Archive',coordinator:'Coordinator',enroll:'Enrollment',legacy:'Installer'}[suite])+' assertions: 1 passed; 0 failed'),'missing execution: '+suite);
+        const args=fs.readFileSync(log,'utf8').split(/\r?\n/);
+        for(const name of names)assert.ok(args.includes(path.join(directory,'codexs',name+'.test.cjs')),'not discovered: '+name);
+      }else assert.notEqual(result.status,0,'gate must reject '+failure);
+      if(removed)fs.writeFileSync(removed,'// synthetic discovery fixture\n');
+    }
+  }finally{
+    if(path.dirname(directory)!==path.resolve(os.tmpdir())||!path.basename(directory).startsWith('codexs-workflow-test-'))throw Error('Unsafe gate-fixture cleanup');
+    fs.rmSync(directory,{recursive:true});
+  }
+});

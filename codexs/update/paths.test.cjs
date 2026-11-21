@@ -70,3 +70,67 @@ test('owned path resolution rejects existing junction ancestors', () => {
     fs.rmSync(root, { recursive: true });
   }
 });
+
+const { createHash } = require('node:crypto');
+
+function ownedFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codexs-path-test-'));
+  t.after(() => {
+    if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('codexs-path-test-')) throw Error('Unsafe test cleanup');
+    fs.rmSync(root, { recursive: true });
+  });
+  fs.mkdirSync(path.join(root, 'bin'));
+  fs.writeFileSync(path.join(root, 'bin', 'probe'), 'synthetic');
+  return { root, files: [{ path: 'bin/probe', bytes: 9, sha256: createHash('sha256').update('synthetic').digest('hex') }] };
+}
+
+test('bounded reads permit the exact cap and reject oversized or missing metadata', async t => {
+  const { root } = ownedFixture(t);
+  const file = path.join(root, 'bin', 'probe');
+  assert.equal(typeof api().readBoundedFile, 'function', 'shared bounded reader must exist');
+  assert.equal((await api().readBoundedFile(file, { maxBytes: 9, code: 'TEST_METADATA' })).toString(), 'synthetic');
+  await assert.rejects(api().readBoundedFile(file, { maxBytes: 8, code: 'TEST_METADATA' }), { code: 'TEST_METADATA' });
+  await assert.rejects(api().readBoundedFile(path.join(root, 'missing'), { maxBytes: 9, code: 'TEST_METADATA' }), { code: 'TEST_METADATA' });
+  await assert.rejects(api().readBoundedFile(path.join(root, 'bin'), { maxBytes: 9, code: 'TEST_METADATA' }), { code: 'TEST_METADATA' });
+});
+
+test('exact inventory rejects changed, truncated, missing and extra payload bytes', async t => {
+  const { root, files } = ownedFixture(t);
+  assert.equal(typeof api().verifyInventory, 'function', 'shared inventory verifier must exist');
+  await api().verifyInventory(root, files, { code: 'TEST_INVENTORY' });
+  for (const changed of ['different', 'short']) {
+    fs.writeFileSync(path.join(root, 'bin', 'probe'), changed);
+    await assert.rejects(api().verifyInventory(root, files, { code: 'TEST_INVENTORY' }), { code: 'TEST_INVENTORY' });
+  }
+  fs.unlinkSync(path.join(root, 'bin', 'probe'));
+  await assert.rejects(api().verifyInventory(root, files, { code: 'TEST_INVENTORY' }), { code: 'TEST_INVENTORY' });
+  fs.writeFileSync(path.join(root, 'bin', 'probe'), 'synthetic');
+  fs.writeFileSync(path.join(root, 'unlisted'), 'extra');
+  await assert.rejects(api().verifyInventory(root, files, { code: 'TEST_INVENTORY' }), { code: 'TEST_INVENTORY' });
+});
+
+test('installed inventory permits only the two fixed sidecars as regular files', async t => {
+  const { root, files } = ownedFixture(t);
+  assert.equal(typeof api().verifyInventory, 'function');
+  fs.writeFileSync(path.join(root, 'release.json'), '{}');
+  fs.writeFileSync(path.join(root, 'release.sig'), Buffer.alloc(64));
+  await api().verifyInventory(root, files, { installed: true, code: 'TEST_INVENTORY' });
+  await assert.rejects(api().verifyInventory(root, files, { code: 'TEST_INVENTORY' }), { code: 'TEST_INVENTORY' });
+  fs.unlinkSync(path.join(root, 'release.sig'));
+  fs.mkdirSync(path.join(root, 'release.sig'));
+  await assert.rejects(api().verifyInventory(root, files, { installed: true, code: 'TEST_INVENTORY' }), { code: 'TEST_INVENTORY' });
+});
+
+test('shared readers and inventory refuse junction ancestry without touching its target', async t => {
+  const { root } = ownedFixture(t);
+  assert.equal(typeof api().readBoundedFile, 'function');
+  assert.equal(typeof api().verifyInventory, 'function');
+  fs.mkdirSync(path.join(root, 'outside'));
+  fs.writeFileSync(path.join(root, 'outside', 'sentinel'), 'unchanged');
+  const link = path.join(root, 'link');
+  fs.symlinkSync(path.join(root, 'outside'), link, 'junction');
+  t.after(() => { if (fs.existsSync(link)) fs.unlinkSync(link); });
+  await assert.rejects(api().readBoundedFile(path.join(link, 'sentinel'), { maxBytes: 9, code: 'TEST_METADATA' }), { code: 'PATH' });
+  await assert.rejects(api().verifyInventory(link, [{ path: 'sentinel', bytes: 9, sha256: 'a'.repeat(64) }], { code: 'TEST_INVENTORY' }), { code: 'PATH' });
+  assert.equal(fs.readFileSync(path.join(root, 'outside', 'sentinel'), 'utf8'), 'unchanged');
+});

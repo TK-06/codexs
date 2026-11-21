@@ -397,3 +397,34 @@ try {
   if (extractionFailure) throw extractionFailure;
   assert.equal(result.code, 'READY'); assert.deepEqual((await f.state()).ready, b.ref); await f.unchanged();
 });
+
+test('foreign bounded extractor IO remains retryable on the same signed sequence',async t=>{
+  const f=await fixture(t),extract=f.ports.extract;
+  const other=new Error('synthetic host IO');other.name='UpdateError';other.code='EXTRACT_IO';
+  f.ports.extract=async()=>{throw other};
+  assert.equal((await f.check()).code,'EXTRACT_IO');assert.deepEqual((await f.state()).rejected,[]);
+  f.advance();f.ports.extract=extract;
+  assert.equal((await f.check()).code,'READY');assert.deepEqual((await f.state()).ready,f.candidate.ref);
+  await f.unchanged();
+});
+
+test('an authenticated active release finishes unchanged without staging itself',async t=>{
+  const f=await fixture(t);assert.equal((await f.check()).code,'READY');
+  assert.equal((await api().runUpdate({mode:'promote',root:f.root,request:{}},f.ports)).code,'PROMOTED');
+  f.advance();f.calls.length=0;
+  assert.equal((await f.check()).code,'UNCHANGED');
+  assert.deepEqual(f.calls,['fetch']);assert.equal((await f.state()).ready,null);
+  assert.deepEqual((await f.state()).current,f.candidate.ref);assert.equal((await f.state()).failures,0);
+  const changed=bundle(2,files=>{files.LICENSE=Buffer.from('different signed bytes')});
+  f.advance();f.ports.fetchStableRelease=async()=>({manifestBytes:changed.manifestBytes,signature:changed.signature,assetId:123});
+  assert.equal((await f.check()).code,'REPLAY');assert.deepEqual((await f.state()).current,f.candidate.ref);
+});
+test('rollback binds its observed current reference before touching a successor',async t=>{
+  const f=await fixture(t);await f.check();
+  await api().runUpdate({mode:'promote',root:f.root,request:{}},f.ports);
+  const before=await fs.readFile(path.join(f.root,'current.json'));
+  f.calls.length=0;
+  const result=await api().runUpdate({mode:'rollback',root:f.root,request:{expectedCurrent:bundle(1).ref}},f.ports);
+  assert.deepEqual(result,{code:'STATE_CHANGED',stateChanged:false});
+  assert.deepEqual(await fs.readFile(path.join(f.root,'current.json')),before);assert.deepEqual(f.calls,[]);
+});

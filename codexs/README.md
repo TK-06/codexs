@@ -8,7 +8,46 @@ The interactive Codex editor requests the terminal tab title `codexs-statusline`
 Multiline footer support is explicitly deferred to the next task. The current native binary keeps the first nonempty rendered line. Extra configured lines stay saved and editable for that future task; their absence from the live footer does not indicate lost settings.
 Both commands are intended to work from any directory for the current Windows user once their shim directory is on the user PATH. Neither changes the starting directory. The official `codex` command remains independent.
 
-## Current preparation state
+
+## Signed-update mode: prepared, not enabled
+
+The automatic-update work prepares a separate installation mode. Its pinned native candidate is Codex CLI **0.166.0**; product and upstream formatter versions remain independent. The source-HEAD prototype instructions below still describe the older **0.162.1** installer. Updating the official `codex` command does not update either modified binary.
+
+Signed production publication and enrollment are not enabled yet. Release-bundle acceptance, signing setup, remaining manual observations and one explicit enrollment approval are still required. Running the synthetic suites does not install these commands on this machine.
+
+The reviewed enrollment package provides this interface:
+
+`Invoke-CodexsEnrollment -Bundle <zip> -Manifest <release.json> -Signature <release.sig> -PublicKey <public-key.pem> -NodePath <node.exe> -SettingsPath <existing-settings.json> [-Install]`
+
+Without `-Install`, enrollment validates the signed inputs and reports the proposed installation, shim directory, versions and public-key fingerprint without writing installation files, settings, shims or PATH. With the separately approved switch, it stages and probes the bundle before replacing owned files. Unowned commands, incompatible or missing settings, an already enrolled installation, and running executables from an old installation block replacement. Failed replacement restores the previous installation and all owned shims; a recovery failure retains backups and reports `ENROLL_RECOVERY_REQUIRED`.
+
+Enrollment holds a separate OS lease at the installation root plus `.enroll.lock` throughout staging and activation. Before replacement it flushes a bounded `.enroll.json` recovery journal beside the root, including old/new bytes for all four managed shims. If installation is interrupted, rerun the same reviewed installer with the same destinations and Node path. It can restore the old installation or finish an already committed, fully verified activation without the original downloaded assets. A pending journal blocks normal launch; changed ownership or unknown shim bytes require maintenance and are preserved. Keep the journal, backups and failed tree until recovery succeeds; do not delete the lease by process age.
+
+The client requires Windows x64, PowerShell 5.1, Node 22 or newer at the explicitly selected path, and at least 8 GiB free disk for staging. It does not require Git, gh, npm, Bun, a source checkout or the official Codex installation. Enrollment does not install prerequisites or change execution policy.
+
+The managed layout is:
+
+- `%LOCALAPPDATA%/codexs/bootstrap/`: pinned verifier, protocol, inventory verifier, public key and bounded local configuration. Routine releases cannot rewrite this bootstrap.
+- `%LOCALAPPDATA%/codexs/versions/<release-id>/`: immutable, authenticated native executable, matching helper tree, complete formatter and operational update code.
+- `%LOCALAPPDATA%/codexs/current.json`: atomically replaced release pointers and update/replay state; its named backup is the only pointer-recovery source.
+- `%USERPROFILE%/.local/bin/`: managed `codexs.cmd`, `codexs-statusline.cmd` and their PowerShell `.ps1` companions. PowerShell selects the companions for extensionless commands, avoiding batch-path variable expansion. CMD callers use normal CMD quoting/escaping, including escaping literal exclamation marks when caller delayed expansion is enabled.
+- Existing explicitly approved settings outside immutable releases. Unknown settings and saved extra lines are preserved. No Claude hooks or credentials are imported.
+
+The CMD files contain only ASCII and call their PowerShell companion, which decodes the pinned Node path. This preserves Unicode executable paths under non-UTF8 CMD code pages without changing execution policy or the caller's code page. The live footer uses a short Node command with session-pinned paths and inherited byte streams; it avoids a PowerShell startup on every refresh.
+
+The commands preserve the caller directory, forwarded arguments, ordinary authentication environment and child exit status. CLI launch adds its managed footer option before user arguments, so a later user `-c` retains precedence. CLI and editor pin one complete release for their lifetime; a running session is never switched to another formatter or helper tree.
+
+Normal launches may start a hidden background check, at most hourly. Network access does not delay foreground startup. A verified download becomes ready and is adopted by a subsequent normal launch. Offline/rate-limited checks, incompatible bootstrap/Node/settings versions, low disk or rejected candidates retain the working release. Old immutable releases are retained; automatic garbage collection is deferred.
+
+Standalone `codexs --version`/`-V` prints `codexs <product> (Codex CLI <upstream>)`; the editor prints `codexs-statusline <product>`. These are local read-only diagnostics and do not need a settings file or start update workers.
+
+Only exact `codexs update-status` and `codexs rollback` are reserved launcher commands. Status is read-only and includes current/previous/ready identities, independent product/native versions, scheduling state and the last bounded check reason/timing. Missing or invalid optional check diagnostics report `STATUS_UNAVAILABLE` without echoing their contents or repairing files. Check diagnostics contain no payloads, credentials, session identifiers or environment dumps.
+
+Explicit rollback changes only managed version state, rejects the rolled-back release and retains the highest verified sequence. Prelaunch verification can recover through an independently authenticated predecessor. An arbitrary native nonzero exit or cancellation is returned as-is: it never automatically restarts or replays a conversation. Binary rollback does not restore shared upstream authentication/history/configuration data or reverse upstream data migrations.
+
+The quick gate requires a successful per-file Node summary with executed cases for every discovered suite, plus one positive zero-failure receipt from each PowerShell suite. Empty or skipped-only required suites fail even when their neighbors pass. The signed-mode preparation is verified with recursively discovered Node tests plus `archive.Tests.ps1`, `coordinator.Tests.ps1`, `enroll.Tests.ps1` and the unchanged legacy installer suite. Fixtures use ephemeral test keys, synthetic data and owned executables. Hosted Windows with Node 22 remains the acceptance environment; local Node 24 results alone do not certify a release.
+
+## Legacy source-HEAD prototype preparation
 
 The planned first product prototype is **codexs v1.0.0**. Track three independent versions: product `1.0.0`, native Codex CLI `0.162.1`, and upstream formatter `2.2.32`. Product identity comes from the formatter's canonical `CODEXS_VERSION` export through its `--codex --version` diagnostic; package.json, Cargo and lock versions remain upstream identities. A planned version is not an accepted release or a tested Git tag.
 

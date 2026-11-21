@@ -96,7 +96,8 @@ function Invoke-CodexsExtract([string]$ZipPath,[string]$OutputPath,[string]$Inve
     $outputRoot = Assert-ArchiveOwnedPath $Root $OutputPath
     $inventoryFile = Assert-ArchiveOwnedPath $Root $InventoryPath
     if ((Test-Path -LiteralPath $outputRoot) -or (Get-Item -LiteralPath $inventoryFile).Length -gt 4194304) { throw 'ARCHIVE_REJECTED' }
-    $parsed = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($inventoryFile))
+    $inventoryText=[IO.File]::ReadAllText($inventoryFile)
+    try{$parsed=ConvertFrom-Json -InputObject $inventoryText}catch{throw 'ARCHIVE_REJECTED'}
     if ($parsed -isnot [array]) { throw 'ARCHIVE_REJECTED' }
     $files = @($parsed)
     if ($files.Count -lt 1 -or $files.Count -gt 10000) { throw 'ARCHIVE_REJECTED' }
@@ -171,6 +172,12 @@ function Invoke-CodexsExtract([string]$ZipPath,[string]$OutputPath,[string]$Inve
 
 if ($Archive) {
     $ErrorActionPreference = 'Stop'
-    try { Invoke-CodexsExtract $Archive $Destination $Inventory $AllowedRoot | ConvertTo-Json -Depth 6 -Compress }
-    catch { throw 'ARCHIVE_REJECTED' }
+    try { Invoke-CodexsExtract $Archive $Destination $Inventory $AllowedRoot | Out-Null; Write-Output '{"schema":1,"code":"EXTRACTED"}' }
+    catch {
+        $reason='EXTRACT_IO'
+        for($failure=$_.Exception;$null -ne $failure;$failure=$failure.InnerException){
+            if($failure.Message -ceq 'ARCHIVE_REJECTED' -or $failure -is [IO.InvalidDataException]){$reason='ARCHIVE_REJECTED';break}
+        }
+        throw $reason
+    }
 }

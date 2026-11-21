@@ -166,6 +166,21 @@ try {
         try { Invoke-ArchiveFixture $f | Out-Null } catch { if ($_.Exception.Message -cne 'ARCHIVE_REJECTED') { throw }; $rejected = $true }
         Assert-ArchiveTest $rejected
     }
+    Check-ArchiveTest 'script success returns only the bounded extraction receipt' {
+        $f=New-ArchiveFixture @(@{Name='app';Text='same'})
+        $lines=@(Invoke-ArchiveFixture $f)
+        Assert-ArchiveTest ($lines.Count -eq 1 -and $lines[0] -ceq '{"schema":1,"code":"EXTRACTED"}')
+    }
+    Check-ArchiveTest 'locked input is retryable host IO and the same archive succeeds after release' {
+        $f=New-ArchiveFixture @(@{Name='app';Text='same'})
+        $held=[IO.File]::Open($f.Archive,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        $code=$null
+        try{try{Invoke-ArchiveFixture $f|Out-Null}catch{$code=$_.Exception.Message}}finally{$held.Dispose()}
+        Assert-ArchiveTest ($code -ceq 'EXTRACT_IO')
+        Assert-ArchiveTest (-not [IO.Directory]::Exists($f.Destination))
+        Invoke-ArchiveFixture $f|Out-Null
+        Assert-ArchiveTest ([IO.File]::ReadAllText((Join-Path $f.Destination 'app')) -ceq 'same')
+    }
 } finally {
     $resolved = [IO.Path]::GetFullPath($testRoot)
     $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'

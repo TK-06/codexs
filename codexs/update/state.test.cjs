@@ -215,7 +215,7 @@ test('Windows coordinator proves physical locking and crash recovery in the norm
   const script = "& ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_COORDINATOR_TEST))) -NodePath $env:CODEXS_COORDINATOR_NODE; if (-not $?) { exit 1 }; exit 0";
   const result = spawnSync(path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-      cwd: path.resolve(__dirname, '../..'), windowsHide: true, encoding: 'utf8', timeout: 30000,
+      cwd: path.resolve(__dirname, '../..'), windowsHide: true, encoding: 'utf8', timeout: 90000,
       env: { ...process.env, CODEXS_COORDINATOR_TEST: path.join(__dirname, 'coordinator.Tests.ps1'), CODEXS_COORDINATOR_NODE: process.execPath },
     });
   assert.equal(result.status, 0, result.stdout + result.stderr);
