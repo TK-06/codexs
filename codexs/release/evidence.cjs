@@ -329,9 +329,10 @@ function createGithubClient(options) {
     if(repository!=='TK-06/codexs'||!Number.isSafeInteger(id)||id<1)fail('EVIDENCE_INPUT');
     return 'https://api.github.com/repos/TK-06/codexs/actions/'+suffix(id);
   }
-  async function read(url,max,redirects=false) {
+  async function read(url,max,redirects=false,deadlineMs=15000) {
     try {
-      const signal=AbortSignal.timeout(15000);let current=url,api=true;
+      // One budget covers redirects and the entire body, including a stalled transfer.
+      const signal=AbortSignal.timeout(deadlineMs);let current=url,api=true;
       for(let hops=0;hops<3;hops++) {
         const headers=api?{Accept:'application/vnd.github+json',Authorization:'Bearer '+options.token,'X-GitHub-Api-Version':'2022-11-28','User-Agent':'codexs-release-evidence'}:{'User-Agent':'codexs-release-evidence'};
         const response=await request(current,{method:'GET',headers,redirect:'manual',credentials:'omit',signal});
@@ -366,9 +367,9 @@ function createGithubClient(options) {
     async downloadArtifact(repository,id,limits){
       let max=32*1024**2;
       if(limits!==undefined){fields(limits,['maxBytes']);if(!Number.isSafeInteger(limits.maxBytes)||limits.maxBytes<1||limits.maxBytes>256*1024**2)fail('EVIDENCE_INPUT');max=limits.maxBytes;}
-      return read(route(repository,id,value=>`artifacts/${value}/zip`),max,true);
+      return read(route(repository,id,value=>`artifacts/${value}/zip`),max,true,180000);
     },
-    async getJobLog(repository,id){const raw=await read(route(repository,id,value=>`jobs/${value}/logs`),16*1024**2,true);try{return new TextDecoder('utf-8',{fatal:true}).decode(raw);}catch{fail('EVIDENCE_HTTP');}},
+    async getJobLog(repository,id){const raw=await read(route(repository,id,value=>`jobs/${value}/logs`),16*1024**2,true,60000);try{return new TextDecoder('utf-8',{fatal:true}).decode(raw);}catch{fail('EVIDENCE_HTTP');}},
   };
 }
 module.exports={collectEvidence,collectPreBundleEvidence,createGithubClient,createAcceptanceReceipt,downloadDistributionArtifact};

@@ -264,6 +264,71 @@ test('GitHub evidence adapter reads the requested immutable attempt and performs
   assert.equal(requests[0].options.method,'GET');assert.equal(requests[0].options.redirect,'manual');
 });
 
+function evidenceTransferClock(t) {
+  let elapsed=0;
+  const deadlines=[];
+  t.mock.method(AbortSignal,'timeout',milliseconds=>{
+    const controller=new AbortController();deadlines.push({at:elapsed+milliseconds,controller});return controller.signal;
+  });
+  const advance=milliseconds=>{
+    elapsed+=milliseconds;
+    for(const deadline of deadlines)if(deadline.at<=elapsed&&!deadline.controller.signal.aborted)deadline.controller.abort(new DOMException('synthetic transfer deadline','TimeoutError'));
+  };
+  t.after(()=>advance(Infinity));
+  return {advance};
+}
+
+function pendingEvidenceBody(signal) {
+  let controller,done=false;
+  const abort=()=>{if(!done){done=true;controller.error(signal.reason);}};
+  const response=new Response(new ReadableStream({
+    start(value){controller=value;if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});},
+    cancel(){done=true;signal.removeEventListener('abort',abort);},
+  }),{status:200});
+  return {response,finish(value){if(!done){done=true;signal.removeEventListener('abort',abort);controller.enqueue(Buffer.from(value));controller.close();}}};
+}
+
+for(const [kind,elapsed,payload]of [['log',15000,'synthetic job log'],['artifact',60000,'synthetic ZIP bytes']]){
+  test('GitHub '+kind+' transfer accepts a valid body beyond the shorter deadline',{timeout:5000},async t=>{
+    const clock=evidenceTransferClock(t);let body;
+    const github=createGithubClient({token:'SYNTHETIC_TOKEN',fetch:async(url,{signal})=>{body=pendingEvidenceBody(signal);return body.response;}});
+    const pending=(kind==='log'?github.getJobLog('TK-06/codexs',101):github.downloadArtifact('TK-06/codexs',102)).then(value=>({value}),error=>({code:error.code}));
+    clock.advance(elapsed);body.finish(payload);
+    assert.deepEqual(await pending,{value:kind==='log'?payload:Buffer.from(payload)});
+  });
+}
+
+test('GitHub metadata body still expires at fifteen seconds',{timeout:5000},async t=>{
+  const clock=evidenceTransferClock(t);let body;
+  const github=createGithubClient({token:'SYNTHETIC_TOKEN',fetch:async(url,{signal})=>{body=pendingEvidenceBody(signal);return body.response;}});
+  const pending=github.getArtifact('TK-06/codexs',102).then(value=>({value}),error=>({code:error.code}));
+  clock.advance(15000);body.finish('{"id":102}');
+  assert.deepEqual(await pending,{code:'EVIDENCE_HTTP'});
+});
+
+for(const [kind,limit]of [['log',60000],['artifact',180000]]){
+  test('GitHub stalled '+kind+' transfer remains bounded at its transfer deadline',{timeout:5000},async t=>{
+    const clock=evidenceTransferClock(t);let signal;
+    const github=createGithubClient({token:'SYNTHETIC_TOKEN',fetch:async(url,options)=>{signal=options.signal;return pendingEvidenceBody(signal).response;}});
+    const pending=(kind==='log'?github.getJobLog('TK-06/codexs',101):github.downloadArtifact('TK-06/codexs',102)).then(value=>({value}),error=>({code:error.code}));
+    clock.advance(limit-1);assert.equal(signal.aborted,false,'transfer expired before its approved budget');
+    clock.advance(1);assert.deepEqual(await pending,{code:'EVIDENCE_HTTP'});
+  });
+}
+
+test('GitHub artifact redirects share one total transfer deadline',{timeout:5000},async t=>{
+  const clock=evidenceTransferClock(t);let requests=0,body;
+  const github=createGithubClient({token:'SYNTHETIC_TOKEN',fetch:async(url,{signal})=>{
+    requests++;
+    if(requests===1){clock.advance(120000);return new Response(null,{status:302,headers:{location:'https://productionresultssa1.blob.core.windows.net/synthetic'}});}
+    body=pendingEvidenceBody(signal);return body.response;
+  }});
+  const pending=github.downloadArtifact('TK-06/codexs',102).then(value=>({value}),error=>({code:error.code}));
+  await new Promise(setImmediate);
+  assert.equal(requests,2);assert.ok(body);
+  clock.advance(60000);assert.deepEqual(await pending,{code:'EVIDENCE_HTTP'});
+});
+
 test('GitHub artifact redirect receives no token after leaving the API origin',async()=>{
   const requests=[],payload=Buffer.from('synthetic archive');
   const github=createGithubClient({token:'SYNTHETIC_TOKEN',fetch:async(url,options)=>{
