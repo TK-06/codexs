@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$Archive,[string]$Destination,[string]$Inventory,[string]$AllowedRoot)
+param([string]$Archive,[string]$Destination,[string]$Inventory,[string]$AllowedRoot,[switch]$Create,[string]$Source)
 
 function Assert-ArchiveOwnedPath([string]$Root,[string]$Candidate) {
     if ([string]::IsNullOrWhiteSpace($Root) -or [string]::IsNullOrWhiteSpace($Candidate)) { throw 'ARCHIVE_REJECTED' }
@@ -170,7 +170,106 @@ function Invoke-CodexsExtract([string]$ZipPath,[string]$OutputPath,[string]$Inve
     } finally { if ($zip) { $zip.Dispose() }; $stream.Dispose() }
 }
 
-if ($Archive) {
+function Invoke-CodexsCreateArchive([string]$SourcePath,[string]$ZipPath,[string]$InventoryPath,[string]$Root) {
+    Add-Type -AssemblyName System.IO.Compression
+    $sourceRoot=Assert-ArchiveOwnedPath $Root $SourcePath
+    $zipFile=Assert-ArchiveOwnedPath $Root $ZipPath
+    $inventoryFile=Assert-ArchiveOwnedPath $Root $InventoryPath
+    if (-not [IO.Directory]::Exists($sourceRoot) -or (Test-Path -LiteralPath $zipFile) -or
+        $zipFile.StartsWith($sourceRoot.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or
+        (Get-Item -LiteralPath $inventoryFile).Length -gt 4194304) { throw 'ARCHIVE_REJECTED' }
+    try { $parsed=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($inventoryFile)) } catch { throw 'ARCHIVE_REJECTED' }
+    if ($parsed -isnot [array] -or $parsed.Count -lt 1 -or $parsed.Count -gt 10000) { throw 'ARCHIVE_REJECTED' }
+    $expected=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
+    $parents=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $total=[long]0
+    foreach($file in $parsed) {
+        if ((@($file.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'bytes,path,sha256') { throw 'ARCHIVE_REJECTED' }
+        Assert-ArchiveName $file.path
+        if (-not (Test-ArchiveInteger $file.bytes) -or $file.sha256 -isnot [string] -or $file.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'ARCHIVE_REJECTED' }
+        $name=$file.path.Normalize([Text.NormalizationForm]::FormC)
+        if($expected.ContainsKey($name)){throw 'ARCHIVE_REJECTED'}
+        $expected.Add($name,$file)
+        $parts=$name.Split('/')
+        for($index=1;$index -lt $parts.Length;$index++){[void]$parents.Add(($parts[0..($index-1)] -join '/'))}
+        $total+=[long]$file.bytes
+        if($total -gt 2147483648){throw 'ARCHIVE_REJECTED'}
+    }
+    foreach($name in $expected.Keys){if($parents.Contains($name)){throw 'ARCHIVE_REJECTED'}}
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    function Test-CreateSource([string]$Relative) {
+        $directory=if($Relative){Join-Path $sourceRoot $Relative.Replace('/','\')}else{$sourceRoot}
+        [void](Assert-ArchiveOwnedPath $Root $directory)
+        foreach($item in @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction Stop)) {
+            if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'ARCHIVE_REJECTED'}
+            $name=if($Relative){$Relative+'/'+$item.Name}else{$item.Name}
+            Assert-ArchiveName $name
+            $normalized=$name.Normalize([Text.NormalizationForm]::FormC)
+            if($item.PSIsContainer){
+                if(-not $parents.Contains($normalized)){throw 'ARCHIVE_REJECTED'}
+                Test-CreateSource $name
+            }else{
+                if(-not $expected.ContainsKey($normalized) -or $expected[$normalized].path -cne $name -or
+                    $item.Length -ne $expected[$normalized].bytes -or -not $seen.Add($normalized)){throw 'ARCHIVE_REJECTED'}
+                if((Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected[$normalized].sha256){throw 'ARCHIVE_REJECTED'}
+            }
+        }
+    }
+    Test-CreateSource ''
+    if($seen.Count -ne $expected.Count){throw 'ARCHIVE_REJECTED'}
+    # Hexadecimal UTF-8 keys preserve byte order even for supplementary Unicode characters.
+    [string[]]$ordered=@($parsed | ForEach-Object {$_.path})
+    [string[]]$keys=@($ordered | ForEach-Object {([BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($_))).Replace('-','')})
+    [Array]::Sort($keys,$ordered,[StringComparer]::Ordinal)
+    $stream=$null;$zip=$null;$created=$false
+    try {
+        $stream=[IO.File]::Open($zipFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        $created=$true
+        $zip=[IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Create,$true,[Text.Encoding]::UTF8)
+        foreach($name in $ordered) {
+            $file=$expected[$name.Normalize([Text.NormalizationForm]::FormC)]
+            $sourceFile=Assert-ArchiveOwnedPath $Root (Join-Path $sourceRoot $name.Replace('/','\'))
+            $inputStream=[IO.File]::Open($sourceFile,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+            $outputStream=$null;$sha=[Security.Cryptography.SHA256]::Create()
+            try {
+                if($inputStream.Length -ne $file.bytes){throw 'ARCHIVE_REJECTED'}
+                $entry=$zip.CreateEntry($name,[IO.Compression.CompressionLevel]::Optimal)
+                $entry.LastWriteTime=[DateTimeOffset]::new(2000,1,1,0,0,0,[TimeSpan]::Zero)
+                $entry.ExternalAttributes=0
+                $outputStream=$entry.Open();$buffer=New-Object byte[] 65536;$actual=[long]0
+                while(($read=$inputStream.Read($buffer,0,$buffer.Length)) -gt 0){
+                    $actual+=$read
+                    if($actual -gt $file.bytes){throw 'ARCHIVE_REJECTED'}
+                    [void]$sha.TransformBlock($buffer,0,$read,$buffer,0)
+                    $outputStream.Write($buffer,0,$read)
+                }
+                [void]$sha.TransformFinalBlock([byte[]]@(),0,0)
+                $digest=([BitConverter]::ToString($sha.Hash)).Replace('-','').ToLowerInvariant()
+                if($actual -ne $file.bytes -or $digest -cne $file.sha256){throw 'ARCHIVE_REJECTED'}
+            } finally {if($outputStream){$outputStream.Dispose()};$inputStream.Dispose();$sha.Dispose()}
+        }
+        $zip.Dispose();$zip=$null
+        $stream.Flush($true)
+        Read-ArchiveLayout $stream
+        $stream.Dispose();$stream=$null
+    } catch {
+        if($zip){$zip.Dispose();$zip=$null};if($stream){$stream.Dispose();$stream=$null}
+        if($created){[IO.File]::Delete((Assert-ArchiveOwnedPath $Root $zipFile))}
+        throw
+    } finally {if($zip){$zip.Dispose()};if($stream){$stream.Dispose()}}
+}
+
+if ($Create) {
+    $ErrorActionPreference='Stop'
+    try { Invoke-CodexsCreateArchive $Source $Archive $Inventory $AllowedRoot; Write-Output '{"schema":1,"code":"CREATED"}' }
+    catch {
+        $reason='ARCHIVE_IO'
+        for($failure=$_.Exception;$null -ne $failure;$failure=$failure.InnerException){
+            if($failure.Message -ceq 'ARCHIVE_REJECTED' -or $failure -is [IO.InvalidDataException]){$reason='ARCHIVE_REJECTED';break}
+        }
+        throw $reason
+    }
+} elseif ($Archive) {
     $ErrorActionPreference = 'Stop'
     try { Invoke-CodexsExtract $Archive $Destination $Inventory $AllowedRoot | Out-Null; Write-Output '{"schema":1,"code":"EXTRACTED"}' }
     catch {

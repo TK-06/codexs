@@ -171,6 +171,67 @@ try {
         $lines=@(Invoke-ArchiveFixture $f)
         Assert-ArchiveTest ($lines.Count -eq 1 -and $lines[0] -ceq '{"schema":1,"code":"EXTRACTED"}')
     }
+    Check-ArchiveTest 'trusted writer round trips Unicode nested and empty files through the unchanged extractor' {
+        $f=New-ArchiveFixture @(@{Name='bin/native';Text='synthetic'},@{Name='formatter/chunks/theme.js';Text='theme'},@{Name='unicode-ไทย';Text=''},@{Name='zero';Text=''})
+        Invoke-ArchiveFixture $f|Out-Null
+        $created=Join-Path $f.Root 'created.zip'
+        $receipt=@(& ([scriptblock]::Create([IO.File]::ReadAllText($ArchiveScript))) -Create -Source $f.Destination -Archive $created -Inventory $f.Inventory -AllowedRoot $f.Root)
+        Assert-ArchiveTest ($receipt.Count -eq 1 -and $receipt[0] -ceq '{"schema":1,"code":"CREATED"}')
+        $f.Archive=$created;$f.Destination=Join-Path $f.Root 'roundtrip'
+        Invoke-ArchiveFixture $f|Out-Null
+        Assert-ArchiveTest ([IO.File]::ReadAllText((Join-Path $f.Destination 'formatter/chunks/theme.js')) -ceq 'theme')
+        Assert-ArchiveTest ((Get-Item -LiteralPath (Join-Path $f.Destination 'zero')).Length -eq 0)
+    }
+    Check-ArchiveTest 'trusted writer produces identical bytes independent of source timestamps and inventory order' {
+        $f=New-ArchiveFixture @(@{Name='z';Text='last'},@{Name='a';Text='first'})
+        Invoke-ArchiveFixture $f|Out-Null
+        $first=Join-Path $f.Root 'first.zip';$second=Join-Path $f.Root 'second.zip'
+        & ([scriptblock]::Create([IO.File]::ReadAllText($ArchiveScript))) -Create -Source $f.Destination -Archive $first -Inventory $f.Inventory -AllowedRoot $f.Root|Out-Null
+        (Get-Item -LiteralPath (Join-Path $f.Destination 'a')).LastWriteTimeUtc=[datetime]::UtcNow.AddYears(-1)
+        Write-ArchiveInventory $f @($f.Files[1],$f.Files[0])
+        & ([scriptblock]::Create([IO.File]::ReadAllText($ArchiveScript))) -Create -Source $f.Destination -Archive $second -Inventory $f.Inventory -AllowedRoot $f.Root|Out-Null
+        Assert-ArchiveTest ((Get-FileHash -LiteralPath $first -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $second -Algorithm SHA256).Hash)
+    }
+    Check-ArchiveTest 'trusted writer accepts a one-file inventory array and rejects a one-file object' {
+        $f=New-ArchiveFixture @(@{Name='app';Text='same'});Invoke-ArchiveFixture $f|Out-Null
+        $created=Join-Path $f.Root 'created.zip'
+        & ([scriptblock]::Create([IO.File]::ReadAllText($ArchiveScript))) -Create -Source $f.Destination -Archive $created -Inventory $f.Inventory -AllowedRoot $f.Root|Out-Null
+        Assert-ArchiveTest ([IO.File]::Exists($created))
+        [IO.File]::WriteAllText($f.Inventory,(ConvertTo-Json -InputObject $f.Files[0] -Compress),[Text.UTF8Encoding]::new($false))
+        $rejected=$false;$second=Join-Path $f.Root 'object.zip'
+        try{& ([scriptblock]::Create([IO.File]::ReadAllText($ArchiveScript))) -Create -Source $f.Destination -Archive $second -Inventory $f.Inventory -AllowedRoot $f.Root|Out-Null}catch{if($_.Exception.Message -cne 'ARCHIVE_REJECTED'){throw};$rejected=$true}
+        Assert-ArchiveTest ($rejected -and -not [IO.File]::Exists($second))
+    }
+    Check-ArchiveTest 'trusted writer refuses an unlisted source file before creating the archive' {
+        $f=New-ArchiveFixture @(@{Name='app';Text='same'});Invoke-ArchiveFixture $f|Out-Null
+        [IO.File]::WriteAllText((Join-Path $f.Destination 'unlisted'),'synthetic')
+        $created=Join-Path $f.Root 'created.zip';$rejected=$false
+        try{& ([scriptblock]::Create([IO.File]::ReadAllText($ArchiveScript))) -Create -Source $f.Destination -Archive $created -Inventory $f.Inventory -AllowedRoot $f.Root|Out-Null}catch{if($_.Exception.Message -cne 'ARCHIVE_REJECTED'){throw};$rejected=$true}
+        Assert-ArchiveTest ($rejected -and -not (Test-Path -LiteralPath $created))
+    }
+    Check-ArchiveTest 'trusted writer refuses changed source bytes and removes only its partial output' {
+        $f=New-ArchiveFixture @(@{Name='app';Text='same'});Invoke-ArchiveFixture $f|Out-Null
+        [IO.File]::WriteAllText((Join-Path $f.Destination 'app'),'evil')
+        $created=Join-Path $f.Root 'created.zip';$rejected=$false
+        try{& ([scriptblock]::Create([IO.File]::ReadAllText($ArchiveScript))) -Create -Source $f.Destination -Archive $created -Inventory $f.Inventory -AllowedRoot $f.Root|Out-Null}catch{if($_.Exception.Message -cne 'ARCHIVE_REJECTED'){throw};$rejected=$true}
+        Assert-ArchiveTest ($rejected -and -not (Test-Path -LiteralPath $created))
+        Assert-ArchiveTest ([IO.File]::ReadAllText((Join-Path $f.Destination 'app')) -ceq 'evil')
+    }
+    Check-ArchiveTest 'trusted writer never overwrites an existing archive' {
+        $f=New-ArchiveFixture @(@{Name='app';Text='same'});Invoke-ArchiveFixture $f|Out-Null
+        $hash=(Get-FileHash -LiteralPath $f.Archive -Algorithm SHA256).Hash;$rejected=$false
+        try{& ([scriptblock]::Create([IO.File]::ReadAllText($ArchiveScript))) -Create -Source $f.Destination -Archive $f.Archive -Inventory $f.Inventory -AllowedRoot $f.Root|Out-Null}catch{if($_.Exception.Message -cne 'ARCHIVE_REJECTED'){throw};$rejected=$true}
+        Assert-ArchiveTest $rejected
+        Assert-ArchiveTest ((Get-FileHash -LiteralPath $f.Archive -Algorithm SHA256).Hash -ceq $hash)
+    }
+    Check-ArchiveTest 'trusted writer rejects output inside its source and outside its owned root' {
+        $f=New-ArchiveFixture @(@{Name='app';Text='same'});Invoke-ArchiveFixture $f|Out-Null
+        foreach($created in @((Join-Path $f.Destination 'inside.zip'),(Join-Path $testRoot 'outside.zip'))){
+            $rejected=$false
+            try{& ([scriptblock]::Create([IO.File]::ReadAllText($ArchiveScript))) -Create -Source $f.Destination -Archive $created -Inventory $f.Inventory -AllowedRoot $f.Root|Out-Null}catch{if($_.Exception.Message -cne 'ARCHIVE_REJECTED'){throw};$rejected=$true}
+            Assert-ArchiveTest ($rejected -and -not (Test-Path -LiteralPath $created))
+        }
+    }
     Check-ArchiveTest 'locked input is retryable host IO and the same archive succeeds after release' {
         $f=New-ArchiveFixture @(@{Name='app';Text='same'})
         $held=[IO.File]::Open($f.Archive,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)

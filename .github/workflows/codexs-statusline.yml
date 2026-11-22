@@ -14,7 +14,7 @@ on:
         required: true
         type: choice
         default: feature
-        options: [feature, full, baseline, build, integration, triage, triage-current, config, config-baseline, cleanup-red, cleanup]
+        options: [feature, full, baseline, build, integration, triage, triage-current, config, config-baseline, cleanup-red, cleanup, formatter, bundle, evidence]
       candidate_sha:
         description: 'Optional immutable candidate SHA for explicit release validation'
         required: false
@@ -27,6 +27,31 @@ on:
         default: ''
       validation_id:
         description: 'Required with candidate_sha: unique invocation label'
+        required: false
+        type: string
+        default: ''
+      formatter_sha:
+        description: 'Required for formatter/bundle/evidence: immutable formatter source SHA'
+        required: false
+        type: string
+        default: ''
+      formatter_version:
+        description: 'Required for formatter/bundle/evidence: pinned formatter package version'
+        required: false
+        type: string
+        default: ''
+      source_version:
+        description: 'Required for formatter/bundle/evidence: stable native source version'
+        required: false
+        type: string
+        default: ''
+      product_version:
+        description: 'Stable codexs product version for bundle acceptance'
+        required: false
+        type: string
+        default: '1.0.0'
+      evidence_request:
+        description: 'Bundle/evidence only: bounded JSON with completed run locators and distribution artifact IDs'
         required: false
         type: string
         default: ''
@@ -44,6 +69,26 @@ on:
       validation_id:
         required: true
         type: string
+      formatter_sha:
+        required: false
+        type: string
+        default: ''
+      formatter_version:
+        required: false
+        type: string
+        default: ''
+      source_version:
+        required: false
+        type: string
+        default: ''
+      product_version:
+        required: false
+        type: string
+        default: '1.0.0'
+      evidence_request:
+        required: false
+        type: string
+        default: ''
     outputs:
       validation_summary:
         description: 'Evidence locator only; suite outcomes must be collected and verified separately'
@@ -64,6 +109,7 @@ jobs:
     outputs:
       matrix: ${{ steps.scopes.outputs.matrix }}
       candidate_sha: ${{ steps.scopes.outputs.candidate_sha }}
+      native_required: ${{ steps.scopes.outputs.native_required }}
       validation_summary: ${{ steps.scopes.outputs.validation_summary }}
     steps:
       - name: Resolve execution scopes
@@ -74,13 +120,37 @@ jobs:
           CALLER_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           CALLER_BASELINE_SHA: ${{ inputs.baseline_sha }}
           CALLER_VALIDATION_ID: ${{ inputs.validation_id }}
+          CALLER_FORMATTER_SHA: ${{ inputs.formatter_sha }}
+          CALLER_FORMATTER_VERSION: ${{ inputs.formatter_version }}
+          CALLER_SOURCE_VERSION: ${{ inputs.source_version }}
+          CALLER_PRODUCT_VERSION: ${{ inputs.product_version }}
+          CALLER_EVIDENCE_REQUEST: ${{ inputs.evidence_request }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $isBundleStage = $env:REQUESTED_SCOPE -cin @('formatter','bundle','evidence')
           $hasCaller = -not [string]::IsNullOrEmpty($env:CALLER_CANDIDATE_SHA) -or -not [string]::IsNullOrEmpty($env:CALLER_BASELINE_SHA) -or -not [string]::IsNullOrEmpty($env:CALLER_VALIDATION_ID)
           if ($hasCaller) {
             if ($env:CALLER_CANDIDATE_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:CALLER_BASELINE_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Reusable validation requires immutable candidate and baseline SHAs' }
             if ($env:CALLER_VALIDATION_ID -cnotmatch '^[a-z][a-z0-9-]{0,31}$') { throw 'Unsafe validation invocation identity' }
-            if ($env:REQUESTED_SCOPE -ceq 'feature') { $scopes = @('feature') }
+            if ($isBundleStage) {
+              if ($env:CALLER_FORMATTER_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Bundle validation requires immutable formatter source' }
+              foreach ($version in @($env:CALLER_SOURCE_VERSION,$env:CALLER_FORMATTER_VERSION)) {
+                if ($version.Length -gt 64 -or $version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Bundle validation requires stable native and formatter versions' }
+              }
+              if ($env:REQUESTED_SCOPE -cin @('bundle','evidence')) {
+                if ($env:CALLER_PRODUCT_VERSION.Length -gt 64 -or $env:CALLER_PRODUCT_VERSION -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Bundle validation requires stable product version' }
+                if (-not $env:CALLER_EVIDENCE_REQUEST -or [Text.Encoding]::UTF8.GetByteCount($env:CALLER_EVIDENCE_REQUEST) -gt 16384) { throw 'Bounded evidence request required' }
+                $request=ConvertFrom-Json $env:CALLER_EVIDENCE_REQUEST
+                $keys=@($request.PSObject.Properties.Name | Sort-Object) -join ','
+                $expected=if($env:REQUESTED_SCOPE -ceq 'bundle'){'formatter_artifact,runs'}else{'bundle_artifact,formatter_artifact,runs'}
+                if ($keys -cne $expected -or $request.runs -isnot [array] -or $request.runs.Count -lt 1 -or $request.runs.Count -gt 7) { throw 'Invalid evidence request schema' }
+                foreach($key in @('formatter_artifact')+$(if($env:REQUESTED_SCOPE -ceq 'evidence'){@('bundle_artifact')}else{@()})) {
+                  if ($request.$key -is [string] -or $request.$key -is [bool] -or $request.$key -lt 1 -or $request.$key -gt 9007199254740991 -or [math]::Truncate($request.$key) -ne $request.$key) { throw 'Invalid distribution artifact identity' }
+                }
+              }
+              $scopes = @($env:REQUESTED_SCOPE)
+            }
+            elseif ($env:REQUESTED_SCOPE -ceq 'feature') { $scopes = @('feature') }
             elseif ($env:REQUESTED_SCOPE -ceq 'cleanup') { $scopes = @('full', 'config', 'build') }
             else { throw 'Reusable validation requires feature or cleanup scope' }
           }
@@ -98,12 +168,18 @@ jobs:
           "matrix=$matrix" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           $candidate = if ($hasCaller) { $env:CALLER_CANDIDATE_SHA } else { '' }
           "candidate_sha=$candidate" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          $nativeRequired = if ($isBundleStage) { 'false' } else { 'true' }
+          "native_required=$nativeRequired" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           $suffix = if ($hasCaller) { "$env:CALLER_VALIDATION_ID-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" } else { "$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" }
+          $artifactNames = @($scopes | ForEach-Object { "codexs-statusline-$_-$suffix" })
+          if ($isBundleStage) { $artifactNames = @("codexs-task9-quick-$suffix", "codexs-task9-$($env:REQUESTED_SCOPE)-$suffix") }
+          if ($env:REQUESTED_SCOPE -ceq 'formatter') { $artifactNames += "codexs-formatter-dist-$suffix" }
+          if ($env:REQUESTED_SCOPE -ceq 'bundle') { $artifactNames += "codexs-bundle-draft-$suffix" }
           $locator = @{
             schema=1; verified=$false; repository=$env:GITHUB_REPOSITORY
             candidate_sha=$env:CALLER_CANDIDATE_SHA; baseline_sha=$env:CALLER_BASELINE_SHA
             validation_id=$env:CALLER_VALIDATION_ID; run=$env:GITHUB_RUN_ID; attempt=$env:GITHUB_RUN_ATTEMPT
-            scopes=@($scopes); artifacts=@($scopes | ForEach-Object { "codexs-statusline-$_-$suffix" })
+            scopes=@($scopes); artifacts=@($artifactNames)
           } | ConvertTo-Json -Compress -Depth 4
           "validation_summary=$locator" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
@@ -112,6 +188,13 @@ jobs:
     needs: plan
     runs-on: windows-2022
     timeout-minutes: 10
+    env:
+      CODEXS_TASK9_SCOPE: ${{ inputs.scope }}
+      CODEXS_NATIVE_SHA: ${{ inputs.candidate_sha }}
+      CODEXS_UPSTREAM_SHA: ${{ inputs.baseline_sha }}
+      CODEXS_FORMATTER_SHA: ${{ inputs.formatter_sha }}
+      CODEXS_FORMATTER_VERSION: ${{ inputs.formatter_version }}
+      CODEXS_SOURCE_VERSION: ${{ inputs.source_version }}
     defaults:
       run:
         shell: powershell
@@ -166,6 +249,8 @@ jobs:
         run: |
           $WorkflowPath = Join-Path (Get-Location) '.github/workflows/codexs-statusline.yml'
           $ErrorActionPreference = 'Stop'
+          # Probes deliberately rewrite RUNNER_TEMP and run IDs; retain the real controller destination first.
+          $task9CaptureRoot=if($env:CODEXS_TASK9_SCOPE -cin @('formatter','bundle','evidence')){Join-Path $env:RUNNER_TEMP "codexs-task9-quick-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"}else{$null}
           $workflow = Get-Content -LiteralPath $WorkflowPath -Raw
           $probeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('codexs-ci-probe-' + [guid]::NewGuid().ToString('N'))
           New-Item -ItemType Directory -Path $probeRoot | Out-Null
@@ -584,6 +669,10 @@ jobs:
           Remove-Item -LiteralPath $resolvedProbe -Recurse -Force -ErrorAction Stop
           }
           Write-Host "RESULT passed=$($result.passed) failed=$($result.failures.Count)"
+          if ($task9CaptureRoot) {
+            [void][IO.Directory]::CreateDirectory($task9CaptureRoot)
+            [IO.File]::WriteAllText((Join-Path $task9CaptureRoot 'quick.log'),"RESULT passed=$($result.passed) failed=$($result.failures.Count)`n",[Text.UTF8Encoding]::new($false))
+          }
           if ($result.failures.Count) { throw ($result.failures -join "`n") }
           # Expected nonzero probe exits have been checked; do not leak one to GitHub's shell epilogue.
           exit 0
@@ -594,6 +683,11 @@ jobs:
           $testPath = Join-Path (Get-Location) 'codexs/install.Tests.ps1'
           $lines = @(& ([scriptblock]::Create([System.IO.File]::ReadAllText($testPath))) -InstallerPath (Join-Path (Get-Location) 'codexs/install.ps1'))
           $lines | ForEach-Object { Write-Host $_ }
+          if ($env:CODEXS_TASK9_SCOPE -cin @('formatter','bundle','evidence')) {
+            $recordRoot=Join-Path $env:RUNNER_TEMP "codexs-task9-quick-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+            [void][IO.Directory]::CreateDirectory($recordRoot)
+            [IO.File]::WriteAllText((Join-Path $recordRoot 'installer.log'),(($lines -join "`n")+"`n"),[Text.UTF8Encoding]::new($false))
+          }
           $summaries = @($lines | Where-Object { $_ -cmatch '^Installer assertions: [1-9][0-9]* passed; 0 failed$' })
           $allSummaries = @($lines | Where-Object { $_ -cmatch '^Installer assertions:' })
           if ($summaries.Count -ne 1 -or $allSummaries.Count -ne 1) { throw 'Installer suite did not prove successful executed assertions' }
@@ -608,14 +702,25 @@ jobs:
       - name: Check isolated update modules
         run: |
           $ErrorActionPreference = 'Stop'
-          $required = @('codexs/upstream/upstream.test.cjs','codexs/release/workflow.test.cjs','codexs/release/check-tests.test.cjs','codexs/update/protocol.test.cjs','codexs/update/paths.test.cjs','codexs/update/bootstrap.test.cjs','codexs/update/launch.test.cjs','codexs/update/http.test.cjs','codexs/update/state.test.cjs','codexs/update/stage.test.cjs')
+          $required = @('codexs/upstream/upstream.test.cjs','codexs/release/workflow.test.cjs','codexs/release/check-tests.test.cjs','codexs/release/evidence.test.cjs','codexs/release/package.test.cjs','codexs/update/protocol.test.cjs','codexs/update/paths.test.cjs','codexs/update/bootstrap.test.cjs','codexs/update/launch.test.cjs','codexs/update/http.test.cjs','codexs/update/state.test.cjs','codexs/update/stage.test.cjs')
           foreach ($file in $required) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'Missing required updater test suite' } }
           $tests = @(Get-ChildItem -LiteralPath 'codexs/upstream','codexs/release','codexs/update' -Filter '*.test.cjs' -File -Recurse | Sort-Object FullName | ForEach-Object { $_.FullName })
           $ErrorActionPreference = 'Continue'
-          $nodeLines = @(& node codexs/release/check-tests.cjs @tests 2>&1 | ForEach-Object { "$_" })
-          $nodeExit = $LASTEXITCODE
+          $captureScope=$env:CODEXS_TASK9_SCOPE
+          try {
+            # Child fixture workflows must not be able to capture into this job's evidence directory.
+            Remove-Item Env:CODEXS_TASK9_SCOPE -ErrorAction SilentlyContinue
+            $nodeLines = @(& node codexs/release/check-tests.cjs @tests 2>&1 | ForEach-Object { "$_" })
+            $nodeExit = $LASTEXITCODE
+          } finally { $env:CODEXS_TASK9_SCOPE=$captureScope }
           $ErrorActionPreference = 'Stop'
           $nodeLines | ForEach-Object { Write-Host $_ }
+          $recordRoot=$null
+          if ($env:CODEXS_TASK9_SCOPE -cin @('formatter','bundle','evidence')) {
+            $recordRoot=Join-Path $env:RUNNER_TEMP "codexs-task9-quick-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+            [void][IO.Directory]::CreateDirectory($recordRoot)
+            [IO.File]::WriteAllText((Join-Path $recordRoot 'updater.log'),(($nodeLines -join "`n")+"`n"),[Text.UTF8Encoding]::new($false))
+          }
           $summaries = @($nodeLines | Where-Object { $_ -ceq ('# codexs verified suites ' + $tests.Count) })
           if ($null -eq $nodeExit -or $nodeExit -ne 0 -or $tests.Count -lt $required.Count -or $summaries.Count -ne 1) { throw 'Updater module suites did not prove successful executed cases in every file' }
           foreach ($suite in @('archive','coordinator','enroll')) {
@@ -623,6 +728,7 @@ jobs:
             if (-not (Test-Path -LiteralPath $suitePath -PathType Leaf)) { throw 'Missing required PowerShell updater suite' }
             $lines = @(& ([scriptblock]::Create([IO.File]::ReadAllText($suitePath))))
             $lines | ForEach-Object { Write-Host $_ }
+            if ($recordRoot) { [IO.File]::AppendAllText((Join-Path $recordRoot 'updater.log'),(($lines -join "`n")+"`n"),[Text.UTF8Encoding]::new($false)) }
             $label = @{archive='Archive';coordinator='Coordinator';enroll='Enrollment'}[$suite]
             $summaries = @($lines | Where-Object { $_ -cmatch ('^' + $label + ' assertions: [1-9][0-9]* passed; 0 failed$') })
             $allSummaries = @($lines | Where-Object { $_ -cmatch ('^' + $label + ' assertions:') })
@@ -708,8 +814,443 @@ jobs:
           $nativeExit = $LASTEXITCODE
           if ($nativeExit -ne 0) { throw "Status-line formatting failed: $nativeExit" }
 
+      - name: Record complete acceptance
+        if: contains(fromJSON('["formatter","bundle","evidence"]'), inputs.scope)
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:CODEXS_QUICK_LOG_ROOT=Join-Path $env:RUNNER_TEMP "codexs-task9-quick-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $entry=Join-Path $env:RUNNER_TEMP "codexs-task9-quick-record-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.cjs"
+          $program=@'
+          'use strict';
+          const fs=require('node:fs'),path=require('node:path');
+          const {createAcceptanceReceipt}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/evidence.cjs'));
+          const {encodeRelease}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/update/protocol.cjs'));
+          try {
+            const root=process.env.CODEXS_QUICK_LOG_ROOT;
+            const files=new Map(['quick.log','installer.log','updater.log'].map(name=>[name,fs.readFileSync(path.join(root,name))]));
+            const receipt=createAcceptanceReceipt({scope:'quick',candidate:{sha:process.env.CODEXS_NATIVE_SHA,upstream_sha:process.env.CODEXS_UPSTREAM_SHA,version:process.env.CODEXS_SOURCE_VERSION},formatter:{sha:process.env.CODEXS_FORMATTER_SHA,version:process.env.CODEXS_FORMATTER_VERSION},controller_sha:process.env.GITHUB_SHA,files});
+            fs.writeFileSync(path.join(root,'acceptance.json'),encodeRelease(receipt),{flag:'wx'});
+            console.log('codexs quick acceptance recorded');
+          } catch(error) {console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'EVIDENCE_IO'));process.exitCode=1;}
+          '@
+          [IO.File]::WriteAllText($entry,$program,[Text.UTF8Encoding]::new($false))
+          & node $entry
+          if ($LASTEXITCODE -ne 0) { throw 'Quick acceptance did not complete' }
+
+      - name: Upload quick acceptance
+        if: always() && contains(fromJSON('["formatter","bundle","evidence"]'), inputs.scope)
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexs-task9-quick-${{ inputs.validation_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/codexs-task9-quick-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  formatter_acceptance:
+    name: Pinned formatter acceptance
+    if: inputs.scope == 'formatter'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      CODEXS_NATIVE_SHA: ${{ inputs.candidate_sha }}
+      CODEXS_UPSTREAM_SHA: ${{ inputs.baseline_sha }}
+      CODEXS_FORMATTER_SHA: ${{ inputs.formatter_sha }}
+      CODEXS_FORMATTER_VERSION: ${{ inputs.formatter_version }}
+      CODEXS_SOURCE_VERSION: ${{ inputs.source_version }}
+    steps:
+      - name: Checkout formatter controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Checkout pinned formatter
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: TK-06/ccstatusline
+          ref: ${{ inputs.formatter_sha }}
+          path: formatter-source
+          persist-credentials: false
+
+      - name: Install formatter Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Install pinned formatter Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.5'
+
+      - name: Build and test pinned formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_root="$GITHUB_WORKSPACE/formatter-source"
+          test "$(git -C "$source_root" rev-parse HEAD)" = "$CODEXS_FORMATTER_SHA"
+          test "$(bun --version)" = '1.4.5'
+          logs="$RUNNER_TEMP/codexs-task9-formatter-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -- "$logs"
+          cd -- "$source_root"
+          bun install --frozen-lockfile --ignore-scripts 2>&1 | tee "$logs/install.log"
+          bun run lint 2>&1 | tee "$logs/lint.log"
+          printf 'lint_exit=0\n' > "$logs/checks.log"
+          bun test 2>&1 | tee "$logs/tests.log"
+          bun run build 2>&1 | tee "$logs/build.log"
+          printf 'build_exit=0\n' >> "$logs/checks.log"
+          test -f dist/ccstatusline.js
+          git -C "$source_root" diff --exit-code -- .
+
+      - name: Record complete acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          'use strict';
+          const fs=require('node:fs'),path=require('node:path');
+          const root=process.env.GITHUB_WORKSPACE;
+          const {createAcceptanceReceipt}=require(path.join(root,'codexs/release/evidence.cjs'));
+          const {encodeRelease}=require(path.join(root,'codexs/update/protocol.cjs'));
+          try {
+            const logs=path.join(process.env.RUNNER_TEMP,'codexs-task9-formatter-'+process.env.GITHUB_RUN_ID+'-'+process.env.GITHUB_RUN_ATTEMPT);
+            const metadata=JSON.parse(fs.readFileSync(path.join(root,'formatter-source/package.json'),'utf8'));
+            if(metadata.name!=='ccstatusline'||metadata.type!=='module'||metadata.version!==process.env.CODEXS_FORMATTER_VERSION)throw Error('FORMATTER_METADATA');
+            const files=new Map(['tests.log','checks.log'].map(name=>[name,fs.readFileSync(path.join(logs,name))]));
+            const receipt=createAcceptanceReceipt({scope:'formatter',candidate:{sha:process.env.CODEXS_NATIVE_SHA,upstream_sha:process.env.CODEXS_UPSTREAM_SHA,version:process.env.CODEXS_SOURCE_VERSION},formatter:{sha:process.env.CODEXS_FORMATTER_SHA,version:metadata.version},controller_sha:process.env.GITHUB_SHA,files});
+            fs.writeFileSync(path.join(logs,'acceptance.json'),encodeRelease(receipt),{flag:'wx'});
+            console.log('codexs formatter acceptance recorded');
+          } catch(error) {console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'EVIDENCE_IO'));process.exitCode=1;}
+          NODE
+
+      - name: Upload formatter acceptance
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexs-task9-formatter-${{ inputs.validation_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/codexs-task9-formatter-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload complete formatter distribution
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexs-formatter-dist-${{ inputs.validation_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            formatter-source/dist/
+            formatter-source/package.json
+            formatter-source/LICENSE
+          if-no-files-found: error
+          retention-days: 14
+
+  bundle_acceptance:
+    name: Extracted Windows bundle acceptance
+    if: inputs.scope == 'bundle'
+    needs: [plan, quick_checks]
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: powershell
+    env:
+      CODEXS_NATIVE_SHA: ${{ inputs.candidate_sha }}
+      CODEXS_UPSTREAM_SHA: ${{ inputs.baseline_sha }}
+      CODEXS_FORMATTER_SHA: ${{ inputs.formatter_sha }}
+      CODEXS_FORMATTER_VERSION: ${{ inputs.formatter_version }}
+      CODEXS_SOURCE_VERSION: ${{ inputs.source_version }}
+      CODEXS_PRODUCT_VERSION: ${{ inputs.product_version }}
+      CODEXS_EVIDENCE_REQUEST: ${{ inputs.evidence_request }}
+    steps:
+      - name: Checkout bundle controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Checkout pinned native licenses
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+          path: native-source
+
+      - name: Install bundle Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Prepare verified bundle inputs
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
+          const root=process.env.GITHUB_WORKSPACE;
+          const {collectPreBundleEvidence,createGithubClient,downloadDistributionArtifact}=require(path.join(root,'codexs/release/evidence.cjs'));
+          const {assembleBundle,assembleEnrollmentPackage,prepareNativeTree,fetchOfficialPackages}=require(path.join(root,'codexs/release/package.cjs'));
+          const {encodeRelease}=require(path.join(root,'codexs/update/protocol.cjs'));
+          const {resolveOwned}=require(path.join(root,'codexs/update/paths.cjs'));
+          (async()=>{
+            const request=JSON.parse(process.env.CODEXS_EVIDENCE_REQUEST);
+            const candidate={sha:process.env.CODEXS_NATIVE_SHA,upstream_sha:process.env.CODEXS_UPSTREAM_SHA,version:process.env.CODEXS_SOURCE_VERSION};
+            const formatter={sha:process.env.CODEXS_FORMATTER_SHA,version:process.env.CODEXS_FORMATTER_VERSION};
+            const github=createGithubClient({token:process.env.GH_TOKEN,controllerSha:process.env.GITHUB_SHA});
+            const preBundleEvidence=await collectPreBundleEvidence({candidate,formatter,runs:request.runs},github);
+            const build=request.runs.find(ref=>ref.scope==='build'),format=request.runs.find(ref=>ref.scope==='formatter');
+            const native=await downloadDistributionArtifact({ref:build,kind:'native',artifact:build.binary_artifact},github);
+            const formatted=await downloadDistributionArtifact({ref:format,kind:'formatter',artifact:request.formatter_artifact},github);
+            delete process.env.GH_TOKEN;delete process.env.GITHUB_TOKEN;
+            const parent=await fs.realpath(process.env.RUNNER_TEMP),work=await fs.mkdtemp(path.join(parent,'cx9-'));
+            const bundleInputs={pre_evidence_sha256:crypto.createHash('sha256').update(encodeRelease(preBundleEvidence)).digest('hex'),formatter_artifact:{repository:format.repository,run:format.run,attempt:format.attempt,job:format.job,artifact:request.formatter_artifact}};
+            await fs.writeFile(resolveOwned(work,'bundle-inputs.json'),encodeRelease(bundleInputs),{flag:'wx'});
+            const packages=await fetchOfficialPackages(candidate.version,resolveOwned(work,'packages'));
+            const nativeTree=await prepareNativeTree({candidate,...packages,native:native.get('codex.exe'),license:await fs.readFile(path.join(root,'native-source/LICENSE')),notice:await fs.readFile(path.join(root,'native-source/NOTICE'))},resolveOwned(work,'native-inputs'));
+            nativeTree.productVersion=process.env.CODEXS_PRODUCT_VERSION;
+            const formatterRoot=resolveOwned(work,'formatter-inputs');await fs.mkdir(formatterRoot);
+            for(const [name,bytes]of formatted){const file=resolveOwned(formatterRoot,name);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,bytes,{flag:'wx'});}
+            const metadata=JSON.parse(await fs.readFile(path.join(root,'codexs/upstream/overlay.json'),'utf8'));
+            if(crypto.createHash('sha256').update(await fs.readFile(path.join(root,'codexs/upstream/overlay.patch'))).digest('hex')!==metadata.patch_sha256)throw Error('OVERLAY_HASH');
+            const draft=await assembleBundle({nativeTree,formatterDist:resolveOwned(formatterRoot,'dist'),formatterPackage:{path:resolveOwned(formatterRoot,'package.json'),...formatter},overlay:{sha:process.env.GITHUB_SHA,metadata},preBundleEvidence},resolveOwned(work,'output'));
+            const enrollment=await assembleEnrollmentPackage({controllerSha:process.env.GITHUB_SHA},resolveOwned(work,'enrollment'));
+            const exportRoot=resolveOwned(work,'export');await fs.mkdir(exportRoot);
+            await fs.copyFile(draft.archivePath,path.join(exportRoot,'codexs-windows-x64.zip'),require('node:fs').constants.COPYFILE_EXCL);
+            await fs.copyFile(enrollment.archivePath,resolveOwned(exportRoot,'codexs-enrollment.zip'),require('node:fs').constants.COPYFILE_EXCL);
+            await fs.writeFile(resolveOwned(exportRoot,'manifest-base.json'),encodeRelease(draft.manifestBase),{flag:'wx'});
+            const enrollmentMetadata={controller_sha:enrollment.controller_sha,files:enrollment.files,bytes:enrollment.bytes,sha256:enrollment.sha256};
+            await fs.writeFile(resolveOwned(exportRoot,'enrollment.json'),encodeRelease(enrollmentMetadata),{flag:'wx'});
+            await fs.writeFile(resolveOwned(work,'pre-bundle.json'),encodeRelease(preBundleEvidence),{flag:'wx'});
+            await fs.appendFile(process.env.GITHUB_OUTPUT,'draft_path='+exportRoot+'\nwork_path='+work+'\n');
+            await fs.appendFile(process.env.GITHUB_ENV,'CODEXS_BUNDLE_DRAFT='+exportRoot+'\nCODEXS_BUNDLE_WORK='+work+'\n');
+            console.log('codexs complete bundle draft prepared');
+          })().catch(error=>{console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'PACKAGE_IO'));process.exitCode=1;});
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Verified bundle preparation failed'}
+
+      - name: Test extracted distribution outside source checkouts
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto'),assert=require('node:assert/strict');
+          const {promisify}=require('node:util'),exec=promisify(require('node:child_process').execFile);
+          const root=process.env.GITHUB_WORKSPACE,work=process.env.CODEXS_BUNDLE_WORK,draft=process.env.CODEXS_BUNDLE_DRAFT;
+          const {encodeRelease}=require(path.join(root,'codexs/update/protocol.cjs'));
+          const {resolveOwned,verifyInventory,hashFile}=require(path.join(root,'codexs/update/paths.cjs'));
+          let passed=0;
+          (async()=>{
+            const isolated=resolveOwned(work,'acceptance');await fs.mkdir(isolated);
+            const logs=resolveOwned(work,'logs');await fs.mkdir(logs);
+            const manifestBase=JSON.parse(await fs.readFile(path.join(draft,'manifest-base.json'),'utf8'));
+            assert.equal(await hashFile(path.join(draft,'codexs-windows-x64.zip'),manifestBase.archive.bytes,'BUNDLE_HASH'),manifestBase.archive.sha256);passed++;
+            const enrollment=JSON.parse(await fs.readFile(path.join(draft,'enrollment.json'),'utf8'));
+            assert.equal(enrollment.controller_sha,process.env.GITHUB_SHA);
+            assert.equal(await hashFile(path.join(draft,'codexs-enrollment.zip'),enrollment.bytes,'BUNDLE_HASH'),enrollment.sha256);passed++;
+            const inventory=resolveOwned(isolated,'enrollment-inventory.json');await fs.writeFile(inventory,encodeRelease(enrollment.files),{flag:'wx'});
+            const extracted=resolveOwned(isolated,'enrollment'),shell=path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
+            const run=(file,args,options={})=>{
+              const {input,...settings}=options;
+              const operation=exec(file,args,{cwd:isolated,windowsHide:true,timeout:120000,maxBuffer:65536,...settings});
+              operation.child.stdin.end(input);
+              return operation;
+            };
+            const ps=async(program,env={})=>run(shell,['-NoProfile','-NonInteractive','-OutputFormat','Text','-EncodedCommand',Buffer.from("$ProgressPreference='SilentlyContinue';"+program,'utf16le').toString('base64')],{env:{...process.env,...env}});
+            const extractData=Buffer.from(JSON.stringify({script:path.join(root,'codexs/update/archive.ps1'),archive:path.join(draft,'codexs-enrollment.zip'),destination:extracted,inventory,root:work})).toString('base64');
+            await ps("$ErrorActionPreference='Stop';$d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+extractData+"'))|ConvertFrom-Json;& ([scriptblock]::Create([IO.File]::ReadAllText($d.script))) -Archive $d.archive -Destination $d.destination -Inventory $d.inventory -AllowedRoot $d.root");
+            await verifyInventory(extracted,enrollment.files);passed++;
+            const settings=resolveOwned(isolated,'settings.json'),settingsBytes=encodeRelease({version:4,colorLevel:0,lines:[[{id:'one',type:'custom-text',customText:'synthetic footer'}]],unknown_future:{keep:true}});
+            await fs.writeFile(settings,settingsBytes,{flag:'wx'});
+            const home=resolveOwned(isolated,'home');await fs.mkdir(home);
+            const sentinels=['.claude/settings.json','.claude/.credentials.json','.codex/auth.json','.codex/history.jsonl'];
+            for(const name of sentinels){const file=resolveOwned(home,name);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,'synthetic untouched sentinel',{flag:'wx'});}
+            // This key and provisional envelope exist only in owned test scratch.
+            // Actual bundle totals come from this job after it completes, in a separate run.
+            const pre=JSON.parse(await fs.readFile(resolveOwned(work,'pre-bundle.json'),'utf8'));
+            const evidence={...pre,suites:{...pre.suites,bundle:{passed:1,failed:0,ignored:0,exit:0}}};
+            const manifest={...manifestBase,sequence:1,release_id:'codexs-v'+manifestBase.product_version+'-codex'+manifestBase.upstream.version+'-r1',evidence};
+            const keys=crypto.generateKeyPairSync('ed25519'),manifestBytes=encodeRelease(manifest);
+            const manifestPath=path.join(isolated,'release.json'),signaturePath=path.join(isolated,'release.sig'),keyPath=resolveOwned(isolated,'test-public-key.pem');
+            await fs.writeFile(manifestPath,manifestBytes,{flag:'wx'});await fs.writeFile(signaturePath,crypto.sign(null,Buffer.concat([Buffer.from('codexs-release-v1\0'),manifestBytes]),keys.privateKey),{flag:'wx'});
+            await fs.writeFile(keyPath,keys.publicKey.export({type:'spki',format:'pem'}),{flag:'wx'});
+            const options={AllowedRoot:isolated,InstallRoot:resolveOwned(isolated,'installed'),AllowedShimRoot:isolated,ShimRoot:resolveOwned(isolated,'shims'),PackageRoot:resolveOwned(extracted,'update'),Bundle:path.join(draft,'codexs-windows-x64.zip'),Manifest:manifestPath,Signature:signaturePath,PublicKey:keyPath,NodePath:process.execPath,SettingsPath:settings};
+            const data=Buffer.from(JSON.stringify(options)).toString('base64');
+            const code="$ErrorActionPreference='Stop';$d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+data+"'))|ConvertFrom-Json;$options=@{};foreach($p in $d.PSObject.Properties){$options[$p.Name]=$p.Value};. ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $d.PackageRoot 'enroll.ps1'))));$r=Invoke-CodexsEnrollmentCore $options (Get-CodexsEnrollmentOperations) -Install;if(-not $r.Installed){throw 'BUNDLE_ENROLLMENT'};[Console]::Out.WriteLine('BUNDLE_ENROLLED')";
+            const installed=await ps(code,{HOME:home,USERPROFILE:home,CODEX_HOME:resolveOwned(home,'.codex'),LOCALAPPDATA:home,APPDATA:home,TEMP:isolated,TMP:isolated});
+            assert.equal(installed.stdout.trim(),'BUNDLE_ENROLLED');passed++;
+            const installedRoot=options.InstallRoot,versionDir=resolveOwned(installedRoot,'versions/'+manifest.release_id);
+            await verifyInventory(versionDir,manifest.files,{installed:true});passed++;
+            const cleanEnv={SystemRoot:process.env.SystemRoot,WINDIR:process.env.SystemRoot,COMSPEC:path.join(process.env.SystemRoot,'System32/cmd.exe'),PATH:path.join(process.env.SystemRoot,'System32'),HOME:home,USERPROFILE:home,CODEX_HOME:resolveOwned(home,'.codex'),LOCALAPPDATA:home,APPDATA:home,TEMP:isolated,TMP:isolated,NO_COLOR:'1',CCSTATUSLINE_WIDTH:'80'};
+            const native=resolveOwned(versionDir,'bin/codex.exe'),formatter=resolveOwned(versionDir,'formatter/dist/ccstatusline.js');
+            const smoke=await run(native,['codexs-smoke','--node',process.execPath,'--formatter',formatter],{env:cleanEnv});
+            assert.equal(smoke.stderr,'');assert.equal(smoke.stdout.trim(),'{"schema":1,"runner":"ok","formatter":"ok","cleanup":"ok"}');passed++;
+            for(const [name,expected]of [['codexs','codexs '+manifest.product_version+' (Codex CLI '+manifest.upstream.version+')'],['codexs-statusline','codexs-statusline '+manifest.product_version]]){
+              for(const extension of ['ps1','cmd']){
+                const shim=resolveOwned(options.ShimRoot,name+'.'+extension);
+                const result=await ps("$ErrorActionPreference='Stop';& $env:CODEXS_TEST_SHIM --version;if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}",{...cleanEnv,CODEXS_TEST_SHIM:shim});
+                assert.equal(result.stderr,'');assert.equal(result.stdout.trim(),expected);passed++;
+              }
+            }
+            const guard=resolveOwned(isolated,'privacy-guard.cjs'),witness=resolveOwned(isolated,'privacy-attempts.txt');
+            cleanEnv.CODEXS_PRIVACY_WITNESS=witness;
+            await fs.writeFile(guard,[
+              "'use strict';const fs=require('node:fs');",
+              "const blocked=kind=>{fs.appendFileSync(process.env.CODEXS_PRIVACY_WITNESS,kind+'\\n');throw Error('BUNDLE_PRIVACY');};",
+              "const deny=value=>{if(typeof value==='string'&&(/(?:^|[\\\\/])\\.claude(?:[\\\\/]|$)/i.test(value)||value.includes('denied-transcript')))blocked('read');};",
+              "for(const name of ['readFile','readFileSync','open','openSync','stat','statSync','lstat','lstatSync','access','accessSync','readdir','readdirSync','existsSync']){const fn=fs[name];if(fn)fs[name]=function(file,...args){deny(file);return fn.call(this,file,...args);};}",
+              "for(const name of ['readFile','open','stat','lstat','access','readdir']){const fn=fs.promises[name];fs.promises[name]=function(file,...args){deny(file);return fn.call(this,file,...args);};}",
+              "for(const module of ['node:http','node:https'])for(const method of ['get','request'])require(module)[method]=()=>blocked('network');",
+              "for(const method of ['connect','createConnection'])require('node:net')[method]=()=>blocked('network');require('node:net').Socket.prototype.connect=()=>blocked('network');globalThis.fetch=()=>blocked('network');require('node:module').syncBuiltinESMExports();",
+            ].join('\n'),{flag:'wx'});
+            const renderConfig=resolveOwned(isolated,'render.json');
+            const marker='synthetic-footer-abcdefghijklmnopqrstuvwxyz';
+            await fs.writeFile(renderConfig,encodeRelease({version:4,colorLevel:0,flexMode:'full',lines:[[{id:'one',type:'custom-text',customText:marker}]]}),{flag:'wx'});
+            const payload=JSON.stringify({codex:{schema:1},transcript_path:resolveOwned(home,'denied-transcript.jsonl')});
+            for(const width of [12,80]){
+              const result=await run(process.execPath,['--require',guard,formatter,'--config',renderConfig],{env:{...cleanEnv,CCSTATUSLINE_WIDTH:String(width)},input:payload});
+              const visible=result.stdout.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').trimEnd();
+              assert.equal(result.stderr,'');assert.ok(visible.length>0&&visible.length<=width);
+              assert.equal(await fs.stat(witness).catch(error=>{if(error.code==='ENOENT')return null;throw error;}),null,'formatter attempted prohibited I/O');
+              if(width===80)assert.equal(visible.trim(),marker);passed++;
+            }
+            assert.deepEqual(await fs.readFile(settings),settingsBytes);passed++;
+            for(const name of sentinels)assert.equal(await fs.readFile(resolveOwned(home,name),'utf8'),'synthetic untouched sentinel');passed++;
+            await verifyInventory(versionDir,manifest.files,{installed:true});passed++;
+            await fs.writeFile(resolveOwned(logs,'bundle.log'),'Bundle assertions: '+passed+' passed; 0 failed\n',{flag:'wx'});
+            console.log('codexs extracted bundle acceptance passed');
+          })().catch(async error=>{
+            const logs=resolveOwned(work,'logs');await fs.mkdir(logs,{recursive:true});
+            await fs.writeFile(resolveOwned(logs,'bundle.log'),'Bundle assertions: '+passed+' passed; 1 failed\n',{flag:'wx'}).catch(()=>{});
+            console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'BUNDLE_FAILED'));process.exitCode=1;
+          });
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Extracted bundle acceptance failed'}
+
+      - name: Record complete acceptance
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs'),path=require('node:path');
+          const {createAcceptanceReceipt}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/evidence.cjs'));
+          const {encodeRelease}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/update/protocol.cjs'));
+          try {
+            const base=JSON.parse(fs.readFileSync(path.join(process.env.CODEXS_BUNDLE_DRAFT,'manifest-base.json'),'utf8'));
+            const logs=path.join(process.env.CODEXS_BUNDLE_WORK,'logs'),files=new Map([['bundle.log',fs.readFileSync(path.join(logs,'bundle.log'))]]);
+            const bundleInputs=JSON.parse(fs.readFileSync(path.join(process.env.CODEXS_BUNDLE_WORK,'bundle-inputs.json'),'utf8'));
+            const receipt=createAcceptanceReceipt({scope:'bundle',candidate:{sha:process.env.CODEXS_NATIVE_SHA,upstream_sha:process.env.CODEXS_UPSTREAM_SHA,version:process.env.CODEXS_SOURCE_VERSION,archive:{bytes:base.archive.bytes,sha256:base.archive.sha256}},formatter:{sha:process.env.CODEXS_FORMATTER_SHA,version:process.env.CODEXS_FORMATTER_VERSION},controller_sha:process.env.GITHUB_SHA,files,bundleInputs});
+            fs.writeFileSync(path.join(logs,'acceptance.json'),encodeRelease(receipt),{flag:'wx'});
+            console.log('codexs bundle acceptance recorded');
+          } catch(error){console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'EVIDENCE_IO'));process.exitCode=1;}
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Bundle receipt failed'}
+
+      - name: Upload bundle acceptance
+        if: always() && steps.draft.outcome == 'success'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexs-task9-bundle-${{ inputs.validation_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.draft.outputs.work_path }}/logs/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload accepted bundle draft
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexs-bundle-draft-${{ inputs.validation_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.draft.outputs.draft_path }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  release_evidence:
+    name: Complete release evidence
+    if: inputs.scope == 'evidence'
+    needs: [plan, quick_checks]
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout evidence controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Install evidence Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Collect completed exact-archive evidence
+        id: evidence
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEXS_NATIVE_SHA: ${{ inputs.candidate_sha }}
+          CODEXS_UPSTREAM_SHA: ${{ inputs.baseline_sha }}
+          CODEXS_FORMATTER_SHA: ${{ inputs.formatter_sha }}
+          CODEXS_FORMATTER_VERSION: ${{ inputs.formatter_version }}
+          CODEXS_SOURCE_VERSION: ${{ inputs.source_version }}
+          CODEXS_PRODUCT_VERSION: ${{ inputs.product_version }}
+          CODEXS_EVIDENCE_REQUEST: ${{ inputs.evidence_request }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
+          const {collectEvidence,createGithubClient,downloadDistributionArtifact}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/evidence.cjs'));
+          const {encodeRelease}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/update/protocol.cjs'));
+          (async()=>{
+            const request=JSON.parse(process.env.CODEXS_EVIDENCE_REQUEST),github=createGithubClient({token:process.env.GH_TOKEN,controllerSha:process.env.GITHUB_SHA});
+            const ref=request.runs.find(ref=>ref.scope==='bundle');
+            const files=await downloadDistributionArtifact({ref,kind:'bundle',artifact:request.bundle_artifact},github);
+            const base=JSON.parse(files.get('manifest-base.json').toString('utf8')),archive=files.get('codexs-windows-x64.zip');
+            if(base.archive.bytes!==archive.length||base.archive.sha256!==crypto.createHash('sha256').update(archive).digest('hex')||base.native_sha!==process.env.CODEXS_NATIVE_SHA||base.upstream.sha!==process.env.CODEXS_UPSTREAM_SHA||base.formatter.sha!==process.env.CODEXS_FORMATTER_SHA||base.upstream.version!==process.env.CODEXS_SOURCE_VERSION||base.formatter.version!==process.env.CODEXS_FORMATTER_VERSION||base.product_version!==process.env.CODEXS_PRODUCT_VERSION)throw Error('EVIDENCE_ARCHIVE');
+            const candidate={sha:base.native_sha,upstream_sha:base.upstream.sha,version:base.upstream.version,archive:{bytes:base.archive.bytes,sha256:base.archive.sha256}};
+            const formatter={sha:base.formatter.sha,version:base.formatter.version};
+            const evidence=await collectEvidence({candidate,formatter,runs:request.runs},github);
+            // Formatter distribution must still belong to its accepted completed job.
+            await downloadDistributionArtifact({ref:request.runs.find(ref=>ref.scope==='formatter'),kind:'formatter',artifact:request.formatter_artifact},github);
+            const format=request.runs.find(ref=>ref.scope==='formatter');
+            if(!evidence.runs.some(selected=>selected.repository===format.repository&&selected.run===format.run&&selected.attempt===format.attempt&&selected.job===format.job&&selected.artifact===request.formatter_artifact))throw Error('EVIDENCE_BINDING');
+            evidence.runs.push({repository:ref.repository,run:ref.run,attempt:ref.attempt,job:ref.job,artifact:request.bundle_artifact});
+            delete process.env.GH_TOKEN;delete process.env.GITHUB_TOKEN;
+            const output=path.join(process.env.RUNNER_TEMP,'codexs-task9-evidence-'+process.env.GITHUB_RUN_ID+'-'+process.env.GITHUB_RUN_ATTEMPT);await fs.mkdir(output);
+            await fs.writeFile(path.join(output,'evidence.json'),encodeRelease(evidence),{flag:'wx'});
+            await fs.writeFile(path.join(output,'manifest-base.json'),encodeRelease(base),{flag:'wx'});
+            await fs.writeFile(path.join(output,'archive.json'),encodeRelease(base.archive),{flag:'wx'});
+            await fs.appendFile(process.env.GITHUB_OUTPUT,'evidence_path='+output+'\n');
+            console.log('codexs completed exact-archive evidence collected');
+          })().catch(error=>{console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'EVIDENCE_IO'));process.exitCode=1;});
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Complete evidence collection failed'}
+
+      - name: Upload complete evidence
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexs-task9-evidence-${{ inputs.validation_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.evidence.outputs.evidence_path }}/
+          if-no-files-found: error
+          retention-days: 14
+
   windows:
     name: Windows (${{ matrix.scope }})
+    if: ${{ needs.plan.outputs.native_required == 'true' }}
     needs: [plan, quick_checks]
     strategy:
       fail-fast: false

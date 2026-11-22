@@ -6,10 +6,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { fixtureTempRoot } = require('../test-support/update-fixtures.cjs');
+const { fixtureTempRoot, evidenceFixture } = require('../test-support/update-fixtures.cjs');
 
 const root = path.resolve(__dirname, '../..');
-const source = fs.readFileSync(path.join(root, '.github/workflows/codexs-statusline.yml'), 'utf8');
+const source = fs.readFileSync(path.join(root, '.github/workflows/codexs-statusline.yml'), 'utf8').replace(/\r\n?/g,'\n');
 
 function step(name) {
   const lines = source.split(/\r?\n/);
@@ -33,7 +33,7 @@ function step(name) {
   return { body: body.join('\n'), bindings };
 }
 
-function execute(name, context = {}, extra = {}, inspect, prelude = '') {
+function execute(name, context = {}, extra = {}, inspect, prelude = '', timeout = 10000) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codexs-workflow-test-'));
   try {
     const selected = step(name);
@@ -48,7 +48,7 @@ function execute(name, context = {}, extra = {}, inspect, prelude = '') {
     fs.writeFileSync(script, prelude + '\n' + selected.body);
     env.CODEXS_TEST_SCRIPT = script;
     const result = spawnSync(path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-Command', '& ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_TEST_SCRIPT)))'], { env, cwd: root, windowsHide: true, encoding: 'utf8', timeout: 10000 });
+      ['-NoProfile', '-NonInteractive', '-Command', '& ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_TEST_SCRIPT)))'], { env, cwd: root, windowsHide: true, encoding: 'utf8', timeout });
     const outputs = fs.existsSync(env.GITHUB_OUTPUT) ? fs.readFileSync(env.GITHUB_OUTPUT, 'utf8').replace(/^\uFEFF/, '') : '';
     if (inspect) inspect({ result, env, outputs });
     return { ...result, outputs };
@@ -61,6 +61,153 @@ function execute(name, context = {}, extra = {}, inspect, prelude = '') {
 function caller(overrides = {}) {
   return { inputs: { candidate_sha: 'a'.repeat(40), baseline_sha: 'c'.repeat(40), validation_id: 'cleanup', scope: 'cleanup', ...overrides }, matrix: { scope: 'full' } };
 }
+
+function nativeJobEnabled(outputs) {
+  const job=source.match(/^  windows:\r?\n([\s\S]*?)(?=^  [a-z_]+:|$(?![\s\S]))/m);
+  assert.ok(job,'native job must remain defined');
+  const condition=job[1].match(/^    if: (.+)$/m);
+  if(!condition)return true;
+  const expression=condition[1].replace(/^\$\{\{\s*|\s*\}\}$/g,'');
+  const compare=expression.match(/^needs\.plan\.outputs\.([a-z_]+) == '([^']*)'$/);
+  assert.ok(compare,'native policy must remain a supported explicit plan-output comparison');
+  return outputs[compare[1]]===compare[2];
+}
+
+test('formatter bundle and evidence stages resolve immutable inputs without enabling a Cargo job',()=>{
+  for(const scope of ['formatter','bundle','evidence']){
+    const request={runs:[{}],formatter_artifact:1,...(scope==='evidence'?{bundle_artifact:2}:{})};
+    const result=execute('Resolve execution scopes',caller({scope,formatter_sha:'d'.repeat(40),formatter_version:'2.2.32',source_version:'0.166.0',product_version:'1.0.0',evidence_request:JSON.stringify(request)}));
+    assert.equal(result.status,0,result.stderr);
+    const outputs=Object.fromEntries(result.outputs.trim().split(/\r?\n/).map(line=>{const split=line.indexOf('=');return [line.slice(0,split),line.slice(split+1)];}));
+    assert.equal(outputs.native_required,'false');assert.equal(nativeJobEnabled(outputs),false);
+    assert.deepEqual(JSON.parse(outputs.matrix),{scope:[scope]});
+    const locator=JSON.parse(outputs.validation_summary);assert.equal(locator.verified,false);
+    assert.ok(locator.artifacts.includes(`codexs-task9-${scope}-cleanup-101-1`));
+  }
+  for(const scope of ['feature','cleanup']){
+    const result=execute('Resolve execution scopes',caller({scope}));assert.equal(result.status,0,result.stderr);
+    const outputs=Object.fromEntries(result.outputs.trim().split(/\r?\n/).map(line=>{const split=line.indexOf('=');return [line.slice(0,split),line.slice(split+1)];}));
+    assert.equal(outputs.native_required,'true');assert.equal(nativeJobEnabled(outputs),true);
+  }
+});
+
+test('bundle-stage selection requires a full formatter SHA and stable source version',()=>{
+  for(const overrides of [{formatter_sha:''},{formatter_sha:'main'},{formatter_version:''},{formatter_version:'2.2.32-beta.1'},{source_version:''},{source_version:'0.166.0-beta.1'},{candidate_sha:''},{baseline_sha:''}]){
+    const result=execute('Resolve execution scopes',caller({scope:'formatter',formatter_sha:'d'.repeat(40),formatter_version:'2.2.32',source_version:'0.166.0',...overrides}));
+    assert.notEqual(result.status,0,'accepted incomplete bundle-stage identity');
+  }
+});
+
+test('bundle collection requires bounded data locators and a stable product version before scheduling',()=>{
+  const base={scope:'bundle',formatter_sha:'d'.repeat(40),formatter_version:'2.2.32',source_version:'0.166.0',product_version:'1.0.0',evidence_request:JSON.stringify({runs:[{}],formatter_artifact:1})};
+  for(const change of [{evidence_request:''},{evidence_request:'x'.repeat(17000)},{evidence_request:'{"command":"untrusted"}'},{product_version:'1.0.0-beta.1'}]){
+    const result=execute('Resolve execution scopes',caller({...base,...change}));
+    assert.notEqual(result.status,0,'accepted invalid bundle collection input');
+  }
+  for(const scope of ['bundle','evidence']){
+    const request={runs:[{}],formatter_artifact:1,...(scope==='evidence'?{bundle_artifact:2}:{})};
+    const result=execute('Resolve execution scopes',caller({...base,scope,evidence_request:JSON.stringify(request)}));
+    assert.equal(result.status,0,result.stderr);
+  }
+});
+
+test('bundle and final evidence jobs wait for quick checks and retain read-only artifact permissions',()=>{
+  for(const [job,scope]of [['bundle_acceptance','bundle'],['release_evidence','evidence']]){
+    const section=source.match(new RegExp('^  '+job+':\\r?\\n([\\s\\S]*?)(?=^  [a-z_]+:|$(?![\\s\\S]))','m'));
+    assert.ok(section,'missing actual job '+job);
+    assert.match(section[1],new RegExp("^    if: inputs.scope == '"+scope+"'",'m'));
+    assert.match(section[1],/^    needs: \[plan, quick_checks\]$/m);
+    assert.match(section[1],/^      contents: read$/m);assert.match(section[1],/^      actions: read$/m);
+    assert.doesNotMatch(section[1],/contents: write|secrets\.CODEXS_RELEASE_SIGNING_KEY|secrets: inherit|cargo (?:test|build)/);
+  }
+});
+
+function jobStepBody(job,name,text=source) {
+  text=text.replace(/\r\n?/g,'\n');
+  const declaration=new RegExp('^  '+job+':\\r?\\n([\\s\\S]*?)(?=^  [a-z_]+:|$(?![\\s\\S]))','m');
+  const section=text.match(declaration);assert.ok(section,'missing actual job: '+job);
+  const chunks=section[1].split(/^      - name: /m).slice(1),chunk=chunks.find(value=>value.split(/\r?\n/)[0]===name);
+  assert.ok(chunk,'missing actual job step: '+name);
+  const body=chunk.match(/^        run: \|\r?\n((?:          [^\r\n]*(?:\r?\n|$)|\r?\n)+)/m);
+  assert.ok(body,'missing actual job script: '+name);return body[1].replace(/^          /gm,'');
+}
+
+test('actual Bash workflow bodies remain identical after a Windows CRLF checkout',()=>{
+  const crlf=source.replace(/\r?\n/g,'\r\n');
+  for(const name of ['Build and test pinned formatter','Record complete acceptance']){
+    assert.equal(jobStepBody('formatter_acceptance',name,crlf),jobStepBody('formatter_acceptance',name));
+  }
+});
+
+test('hosted formatter scripts run frozen canonical checks and produce measured receipts only after success',()=>{
+  const build=jobStepBody('formatter_acceptance','Build and test pinned formatter');
+  const record=jobStepBody('formatter_acceptance','Record complete acceptance');
+  for(const mode of ['good','install','lint','test','build','empty','dirty']){
+    const parent=fixtureTempRoot(),directory=fs.mkdtempSync(path.join(parent,'codexs-formatter-job-test-'));
+    try {
+      const formatter=path.join(directory,'formatter-source'),temp=path.join(directory,'temp');fs.mkdirSync(formatter);fs.mkdirSync(temp);
+      fs.writeFileSync(path.join(formatter,'package.json'),JSON.stringify({name:'ccstatusline',version:'2.2.32',type:'module'}));fs.writeFileSync(path.join(formatter,'LICENSE'),'synthetic license');
+      for(const name of ['release/evidence.cjs','update/protocol.cjs']){const destination=path.join(directory,'codexs',...name.split('/'));fs.mkdirSync(path.dirname(destination),{recursive:true});fs.copyFileSync(path.join(root,'codexs',...name.split('/')),destination);}
+      const prelude=`
+function git() { if [[ "$*" == *"rev-parse HEAD" ]]; then printf '%s\\n' "$CODEXS_FORMATTER_SHA"; elif [[ "$*" == *"diff --exit-code"* ]]; then [[ "$CODEXS_FORMATTER_CASE" != dirty ]]; else return 97; fi; }
+function bun() {
+  printf '%s\\n' "$*" >> "$CODEXS_BUN_CALLS"
+  case "$*" in
+    '--version') printf '1.4.5\\n';;
+    'install --frozen-lockfile --ignore-scripts') [[ "$CODEXS_FORMATTER_CASE" != install ]];;
+    'run lint') [[ "$CODEXS_FORMATTER_CASE" != lint ]];;
+    'test') if [[ "$CODEXS_FORMATTER_CASE" == test ]]; then return 7; fi; if [[ "$CODEXS_FORMATTER_CASE" == empty ]]; then printf ' 0 pass\\n 0 fail\\nRan 0 tests across 1 file. [0.01s]\\n'; else printf ' 3 pass\\n 0 fail\\nRan 3 tests across 1 file. [0.01s]\\n'; fi;;
+    'run build') if [[ "$CODEXS_FORMATTER_CASE" == build ]]; then return 8; fi; mkdir -p dist; printf 'console.log("synthetic")\\n' > dist/ccstatusline.js;;
+    *) return 99;;
+  esac
+}
+`;
+      const script=path.join(directory,'gate.sh');fs.writeFileSync(script,prelude+'\n'+build+'\n'+record);
+      const env={...process.env,PATH:path.dirname(process.execPath)+path.delimiter+process.env.PATH,GITHUB_WORKSPACE:directory.replaceAll('\\','/'),RUNNER_TEMP:temp.replaceAll('\\','/'),GITHUB_SHA:'c'.repeat(40),GITHUB_RUN_ID:'100',GITHUB_RUN_ATTEMPT:'1',CODEXS_NATIVE_SHA:'b'.repeat(40),CODEXS_UPSTREAM_SHA:'a'.repeat(40),CODEXS_FORMATTER_SHA:'d'.repeat(40),CODEXS_FORMATTER_VERSION:'2.2.32',CODEXS_SOURCE_VERSION:'0.166.0',CODEXS_FORMATTER_CASE:mode,CODEXS_BUN_CALLS:path.join(directory,'bun-calls').replaceAll('\\','/')};
+      const result=spawnSync(path.join(process.env.ProgramFiles,'Git/bin/bash.exe'),['--noprofile','--norc',script.replaceAll('\\','/')],{cwd:directory,env,windowsHide:true,encoding:'utf8',timeout:15000});
+      const receipt=path.join(temp,'codexs-task9-formatter-100-1','acceptance.json');
+      if(mode==='good'){
+        assert.equal(result.status,0,result.stderr);const data=JSON.parse(fs.readFileSync(receipt,'utf8'));
+        assert.deepEqual(data.suites,{formatter:{passed:3,failed:0,ignored:0,exit:0}});assert.equal(data.formatter_sha,'d'.repeat(40));
+        const calls=fs.readFileSync(env.CODEXS_BUN_CALLS,'utf8').trim().split(/\r?\n/);assert.ok(calls.includes('install --frozen-lockfile --ignore-scripts'));assert.ok(calls.includes('run lint'));assert.ok(calls.includes('test'));assert.ok(calls.includes('run build'));
+      }else{assert.notEqual(result.status,0,'formatter accepted '+mode);assert.equal(fs.existsSync(receipt),false,'failed formatter stage produced acceptance');}
+    } finally {
+      if(path.dirname(directory)!==parent||!path.basename(directory).startsWith('codexs-formatter-job-test-'))throw Error('Unsafe formatter fixture cleanup');
+      fs.rmSync(directory,{recursive:true,maxRetries:10,retryDelay:100});
+    }
+  }
+});
+
+test('actual quick receipt step records raw outcomes and rejects failed empty or missing logs',()=>{
+  const body=jobStepBody('quick_checks','Record complete acceptance');
+  for(const mode of ['good','failed','empty','missing']){
+    const parent=fixtureTempRoot(),directory=fs.mkdtempSync(path.join(parent,'codexs-quick-receipt-test-'));
+    try {
+      const temp=path.join(directory,'temp'),logs=path.join(temp,'codexs-task9-quick-100-1');fs.mkdirSync(logs,{recursive:true});
+      const f=evidenceFixture();f.replaceFiles('quick',files=>{for(const[name,value]of Object.entries(files))if(name!=='acceptance.json')fs.writeFileSync(path.join(logs,name),value);});
+      if(mode==='failed')fs.appendFileSync(path.join(logs,'updater.log'),'# fail 1\n');
+      if(mode==='empty')fs.writeFileSync(path.join(logs,'quick.log'),'RESULT passed=0 failed=0\n');
+      if(mode==='missing')fs.unlinkSync(path.join(logs,'installer.log'));
+      for(const name of ['release/evidence.cjs','update/protocol.cjs']){const target=path.join(directory,'codexs',...name.split('/'));fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(path.join(root,'codexs',...name.split('/')),target);}
+      const script=path.join(directory,'record.ps1');fs.writeFileSync(script,body);
+      const env={...process.env,PATH:path.dirname(process.execPath)+path.delimiter+process.env.PATH,GITHUB_WORKSPACE:directory,RUNNER_TEMP:temp,GITHUB_SHA:'c'.repeat(40),GITHUB_RUN_ID:'100',GITHUB_RUN_ATTEMPT:'1',CODEXS_NATIVE_SHA:'b'.repeat(40),CODEXS_UPSTREAM_SHA:'a'.repeat(40),CODEXS_FORMATTER_SHA:'d'.repeat(40),CODEXS_FORMATTER_VERSION:'2.2.32',CODEXS_SOURCE_VERSION:'0.166.0',CODEXS_TEST_ENTRY:script};
+      const result=spawnSync(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command','& ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_TEST_ENTRY)))'],{cwd:directory,env,windowsHide:true,encoding:'utf8',timeout:15000});
+      const file=path.join(logs,'acceptance.json');
+      if(mode==='good'){assert.equal(result.status,0,result.stderr);const receipt=JSON.parse(fs.readFileSync(file,'utf8'));assert.equal(receipt.scope,'quick');assert.deepEqual(receipt.suites.updater,{passed:442,failed:0,ignored:0,exit:0});assert.equal(receipt.controller_sha,'c'.repeat(40));}
+      else{assert.notEqual(result.status,0,'recorded quick acceptance for '+mode);assert.equal(fs.existsSync(file),false);}
+    }finally{if(path.dirname(directory)!==parent||!path.basename(directory).startsWith('codexs-quick-receipt-test-'))throw Error('Unsafe receipt fixture cleanup');fs.rmSync(directory,{recursive:true,maxRetries:10,retryDelay:100});}
+  }
+});
+
+test('actual quick probes capture outcomes using the original job identity despite synthetic environment changes',()=>{
+  const result=execute('Verify workflow behavior without compiling Rust',{}, {CODEXS_TASK9_SCOPE:'formatter'},({result,env})=>{
+    assert.equal(result.status,0,result.stderr);
+    const file=path.join(env.RUNNER_TEMP,'codexs-task9-quick-101-1','quick.log');
+    assert.equal(fs.existsSync(file),true,'quick capture lost the original job RUNNER_TEMP or run identity');
+    assert.equal(fs.readFileSync(file,'utf8'),'RESULT passed=77 failed=0\n');
+  },'',60000);
+  assert.equal(result.error,undefined,'probe regression must finish within its own bounded watchdog');
+});
 
 test('overlay patch checkout preserves exact Git blob bytes even with autocrlf enabled', () => {
   const git = args => {
@@ -474,22 +621,35 @@ test('quick native probes transport oversized runners through owned files and pr
 });
 
 test('native jobs require a validated plan and successful quick checks', () => {
-  // Parse the actual YAML job needs scalars/flow sequences, then evaluate default
-  // GitHub success prerequisites. A failed/skipped quick job must prevent Cargo.
+  // Model default success prerequisites plus explicit data-only conditions.
+  // A failed/skipped quick job must prevent Cargo even when native_required=true.
   const jobs = Object.fromEntries([...source.matchAll(/^  ([a-z_]+):\r?\n([\s\S]*?)(?=^  [a-z_]+:|$(?![\s\S]))/gm)].map(match => {
     const raw = match[2].match(/^    needs: (.+)$/m)?.[1].trim();
     const needs = raw ? (raw.startsWith('[') ? raw.slice(1, -1).split(',').map(value => value.trim()) : [raw]) : [];
     assert.ok(needs.every(value => /^[a-z_]+$/.test(value)), 'unsupported needs syntax');
-    assert.ok(!/^    if:/m.test(match[2]), 'unexpected job condition needs explicit evaluation');
-    return [match[1], needs];
+    const condition=match[2].match(/^    if: (.+)$/m)?.[1].trim();
+    return [match[1], {needs,condition}];
   }));
-  const runnable = (name, results) => jobs[name].every(need => results[need] === 'success');
-  assert.deepEqual(jobs.quick_checks, ['plan']);
-  assert.deepEqual(jobs.windows, ['plan', 'quick_checks']);
+  const runnable=(name,results,outputs={native_required:'true'},inputs={scope:'feature'})=>{
+    if(!jobs[name].needs.every(need=>results[need]==='success'))return false;
+    if(!jobs[name].condition)return true;
+    const condition=jobs[name].condition.replace(/^\$\{\{\s*|\s*\}\}$/g,'');
+    const plan=condition.match(/^needs\.plan\.outputs\.([a-z_]+) == '([^']*)'$/);
+    if(plan)return outputs[plan[1]]===plan[2];
+    const input=condition.match(/^inputs\.([a-z_]+) == '([^']*)'$/);
+    assert.ok(input,'unexpected job condition needs explicit evaluation');
+    return inputs[input[1]]===input[2];
+  };
+  assert.deepEqual(jobs.quick_checks.needs, ['plan']);
+  assert.deepEqual(jobs.windows.needs, ['plan', 'quick_checks']);
   assert.equal(runnable('windows', { plan: 'success', quick_checks: 'success' }), true);
+  assert.equal(runnable('windows',{plan:'success',quick_checks:'success'},{native_required:'false'}),false);
+  assert.equal(runnable('formatter_acceptance',{plan:'success'},{},{scope:'formatter'}),true);
+  assert.equal(runnable('formatter_acceptance',{plan:'success'},{},{scope:'feature'}),false);
   for (const failure of ['failure', 'cancelled', 'skipped', undefined]) {
     assert.equal(runnable('windows', { plan: 'success', quick_checks: failure }), false);
     assert.equal(runnable('windows', { plan: failure, quick_checks: 'success' }), false);
+    assert.equal(runnable('formatter_acceptance',{plan:failure},{},{scope:'formatter'}),false);
   }
 });
 
@@ -682,7 +842,7 @@ function New-Object {
 test('actual quick gates discover launcher suites and propagate every PowerShell suite failure',()=>{
   const tempRoot=fixtureTempRoot();
   const directory=fs.mkdtempSync(path.join(tempRoot,'codexs-workflow-test-'));
-  const names=['release/check-tests','upstream/upstream','release/workflow','update/protocol','update/paths','update/bootstrap','update/launch','update/http','update/state','update/stage'];
+  const names=['release/check-tests','release/evidence','release/package','upstream/upstream','release/workflow','update/protocol','update/paths','update/bootstrap','update/launch','update/http','update/state','update/stage'];
   try{
     for(const name of names){const file=path.join(directory,'codexs',name+'.test.cjs');fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'// synthetic discovery fixture\n');}
     for(const suite of ['archive','coordinator','enroll']){
@@ -690,16 +850,17 @@ test('actual quick gates discover launcher suites and propagate every PowerShell
     }
     fs.writeFileSync(path.join(directory,'codexs/install.Tests.ps1'),"param($InstallerPath)\nif($env:CODEXS_SYNTHETIC_FAIL -ceq 'legacy'){throw 'SYNTHETIC_SUITE_FAILURE'};if($env:CODEXS_SYNTHETIC_FAIL -cne 'empty-legacy'){Write-Output ('Installer assertions: 1 passed; 0 failed')}\n");
     const log=path.join(directory,'node-args');
-    const node="function node { [IO.File]::WriteAllText($env:CODEXS_SYNTHETIC_NODE_ARGS,($args -join [Environment]::NewLine));Write-Output '# tests 1';Write-Output ('# codexs verified suites '+(@($args).Count-1));$global:LASTEXITCODE=0 }\n";
+    const node="function node { if($env:CODEXS_TASK9_SCOPE){[IO.File]::WriteAllText($env:CODEXS_SYNTHETIC_CAPTURE_WITNESS,'leaked capture scope')};[IO.File]::WriteAllText($env:CODEXS_SYNTHETIC_NODE_ARGS,($args -join [Environment]::NewLine));Write-Output '# tests 1';Write-Output ('# codexs verified suites '+(@($args).Count-1));$global:LASTEXITCODE=0 }\n";
     const body=node+step('Check isolated codexs installer').body+'\n'+step('Check isolated update modules').body;
-    for(const failure of ['none','archive','coordinator','enroll','legacy','empty-archive','empty-coordinator','empty-enroll','empty-legacy','missing-launch','missing-http','missing-state','missing-stage']){
-      const removed=failure.startsWith('missing-')?path.join(directory,'codexs/update',failure.slice(8)+'.test.cjs'):null;
+    for(const failure of ['none','archive','coordinator','enroll','legacy','empty-archive','empty-coordinator','empty-enroll','empty-legacy','missing-launch','missing-http','missing-state','missing-stage','missing-release-evidence','missing-release-package']){
+      const removed=failure.startsWith('missing-release-')?path.join(directory,'codexs/release',failure.slice(16)+'.test.cjs'):failure.startsWith('missing-')?path.join(directory,'codexs/update',failure.slice(8)+'.test.cjs'):null;
       if(removed)fs.unlinkSync(removed);
       const result=spawnSync(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),
         ['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(body,'utf16le').toString('base64')],
-        {cwd:directory,env:{...process.env,CODEXS_SYNTHETIC_FAIL:failure,CODEXS_SYNTHETIC_NODE_ARGS:log},windowsHide:true,encoding:'utf8',timeout:10000});
+        {cwd:directory,env:{...process.env,CODEXS_TASK9_SCOPE:'formatter',RUNNER_TEMP:directory,GITHUB_RUN_ID:'100',GITHUB_RUN_ATTEMPT:'1',CODEXS_SYNTHETIC_CAPTURE_WITNESS:path.join(directory,'capture-leaked'),CODEXS_SYNTHETIC_FAIL:failure,CODEXS_SYNTHETIC_NODE_ARGS:log},windowsHide:true,encoding:'utf8',timeout:10000});
       if(failure==='none'){
         assert.equal(result.status,0,result.stderr);
+        assert.equal(fs.existsSync(path.join(directory,'capture-leaked')),false,'controller evidence capture must not be inherited by child fixtures');
         for(const suite of ['archive','coordinator','enroll','legacy'])assert.ok(result.stdout.includes(({archive:'Archive',coordinator:'Coordinator',enroll:'Enrollment',legacy:'Installer'}[suite])+' assertions: 1 passed; 0 failed'),'missing execution: '+suite);
         const args=fs.readFileSync(log,'utf8').split(/\r?\n/);
         for(const name of names)assert.ok(args.includes(path.join(directory,'codexs',name+'.test.cjs')),'not discovered: '+name);

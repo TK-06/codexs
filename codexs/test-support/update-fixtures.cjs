@@ -269,3 +269,137 @@ async function zipDirectory(file,sourceRoot,paths) {
   await execFile(path.join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:15000,maxBuffer:65536});
 }
 module.exports.zipDirectory=zipDirectory;
+
+// Stored ZIP fixtures exercise the evidence reader without any external service or process.
+function evidenceZip(files) {
+  const local = [], central = [];
+  let offset = 0;
+  for (const [name, value] of Object.entries(files)) {
+    const filename = Buffer.from(name), data = Buffer.from(value);
+    let crc = 0xffffffff;
+    for (const byte of data) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+    crc = (crc ^ 0xffffffff) >>> 0;
+    const header = Buffer.alloc(30);
+    header.writeUInt32LE(0x04034b50); header.writeUInt16LE(20, 4); header.writeUInt16LE(0x800, 6);
+    header.writeUInt32LE(crc, 14); header.writeUInt32LE(data.length, 18); header.writeUInt32LE(data.length, 22); header.writeUInt16LE(filename.length, 26);
+    local.push(header, filename, data);
+    const directory = Buffer.alloc(46);
+    directory.writeUInt32LE(0x02014b50); directory.writeUInt16LE(20, 4); directory.writeUInt16LE(20, 6); directory.writeUInt16LE(0x800, 8);
+    directory.writeUInt32LE(crc, 16); directory.writeUInt32LE(data.length, 20); directory.writeUInt32LE(data.length, 24);
+    directory.writeUInt16LE(filename.length, 28); directory.writeUInt32LE(offset, 42);
+    central.push(directory, filename); offset += header.length + filename.length + data.length;
+  }
+  const directory = Buffer.concat(central), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50); end.writeUInt16LE(local.length / 3, 8); end.writeUInt16LE(local.length / 3, 10);
+  end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...local, directory, end]);
+}
+module.exports.evidenceZip = evidenceZip;
+
+function evidenceFixture() {
+  const runs = new Map(), jobs = new Map(), artifacts = new Map(), bytes = new Map(), filesByScope = new Map(), jobLogs=new Map(), distributions=new Map();
+  const candidate = { sha: 'b'.repeat(40), upstream_sha: 'a'.repeat(40), version: '0.166.0', archive:{bytes:1234,sha256:'9'.repeat(64)} };
+  const formatter = { sha: 'd'.repeat(40), version: '2.2.32' };
+  const refs = [];
+  const totals = { quick: [77,0], updater: [442,0], installer: [46,0], formatter: [3010,19], bundle: [12,0] };
+  const counts = name => ({ passed: totals[name][0], failed: 0, ignored: totals[name][1], exit: 0 });
+  function update(scope,raw=evidenceZip(filesByScope.get(scope))) {
+    const ref = refs.find(item => item.scope === scope);
+    bytes.set(ref.artifact, raw);
+    artifacts.get(ref.artifact).size_in_bytes = raw.length;
+    artifacts.get(ref.artifact).digest = 'sha256:' + createHash('sha256').update(raw).digest('hex');
+    const artifact=artifacts.get(ref.artifact),stamp='2026-01-01T00:00:00.0000000Z ';
+    jobLogs.set(ref.job,[artifact,...(scope==='build'?[artifacts.get(ref.binary_artifact)]:[]),...(distributions.has(scope)?[distributions.get(scope)]:[])].map(upload=>[
+      '##[group]Run actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f',
+      '  name: '+upload.name,'##[endgroup]',
+      'SHA256 digest of uploaded artifact is '+upload.digest.slice(7),
+      'Artifact '+upload.name+' successfully finalized. Artifact ID '+upload.id,
+      'Artifact '+upload.name+' has been successfully uploaded! Final size is '+upload.size_in_bytes+' bytes. Artifact ID is '+upload.id,
+    ].map(line=>stamp+line).join('\n')+'\n').join(''));
+  }
+  for (const [index, scope] of ['quick','feature','full','config','build','formatter','bundle'].entries()) {
+    const run = 100 + index * 10, job = run + 1, artifact = run + 2;
+    const native = ['feature','full','config','build'].includes(scope);
+    const ref = { scope, repository: 'TK-06/codexs', run, attempt: 1, job, artifact, controller_sha: 'c'.repeat(40), validation_id: 'fixture' };
+    if(scope==='build')ref.binary_artifact=run+3;
+    refs.push(ref);
+    runs.set(run, { id: run, run_attempt: 1, status: 'completed', conclusion: 'success', head_sha: 'c'.repeat(40), path: '.github/workflows/codexs-statusline.yml', event: 'workflow_dispatch', repository: { full_name: 'TK-06/codexs' } });
+    jobs.set(job, { id: job, run_id: run, run_attempt: 1, head_sha:'c'.repeat(40), status: 'completed', conclusion: 'success', name: native ? `Windows (${scope})` : {quick:'Quick workflow and status-line formatting checks',formatter:'Pinned formatter acceptance',bundle:'Extracted Windows bundle acceptance'}[scope], steps: [{ name: native ? 'Run guarded native Cargo operation' : 'Record complete acceptance', status: 'completed', conclusion: 'success' }] });
+    artifacts.set(artifact, { id: artifact, name: `${native ? 'codexs-statusline' : 'codexs-task9'}-${scope}-fixture-${run}-1`, expired: false, workflow_run: { id: run, head_sha: 'c'.repeat(40) } });
+    if(scope==='build'){
+      const raw=evidenceZip({'codex.exe':'synthetic native, never executed'});bytes.set(ref.binary_artifact,raw);
+      artifacts.set(ref.binary_artifact,{id:ref.binary_artifact,name:`codexs-cli-fixture-${run}-1`,expired:false,size_in_bytes:raw.length,digest:'sha256:'+createHash('sha256').update(raw).digest('hex'),workflow_run:{id:run,head_sha:'c'.repeat(40)}});
+    }
+    let files;
+    if (native) {
+      const [passed, ignored] = { feature:[150,0], full:[6004,8], config:[403,0], build:[0,0] }[scope];
+      files = {
+        'outcome.txt': `scope=${scope} source=${candidate.sha} native_exit=0 passed=${passed} failed=0 ignored=${ignored} total=${passed+ignored} guard_stop=none wrapper=\n`,
+        'setup.log': `preflight_started scope=${scope}\nsource=${candidate.sha} scope=${scope} rust=rustc 1.95.0 target=synthetic-target\n`,
+        'guard-state.json': JSON.stringify({ scope, source_sha: candidate.sha, workspace_version: candidate.version }),
+        'native-exit.txt': '0\n',
+        'cargo.log': scope === 'build' ? '    Finished `release` profile [optimized] target(s) in 10.00s\ncli_version_exit=0 output=codex-cli 0.166.0\n' : `test result: ok. ${passed} passed; 0 failed; ${ignored} ignored; 0 measured; 0 filtered out; finished in 1.00s\n`,
+      };
+    } else {
+      const names = scope === 'quick' ? ['quick','updater','installer'] : [scope];
+      files = { 'acceptance.json': JSON.stringify({schema:1,scope,candidate_sha:candidate.sha,upstream_sha:candidate.upstream_sha,formatter_sha:formatter.sha,controller_sha:ref.controller_sha,suites:Object.fromEntries(names.map(name => [name,counts(name)])),build_exit:null}) };
+      if (scope === 'quick') {
+        files['quick.log'] = 'RESULT passed=77 failed=0\n';
+        files['installer.log'] = 'Installer assertions: 46 passed; 0 failed\n';
+        files['updater.log'] = '# tests 389\n# pass 389\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# codexs verified suites 10\nArchive assertions: 16 passed; 0 failed\nCoordinator assertions: 18 passed; 0 failed\nEnrollment assertions: 19 passed; 0 failed\n';
+      } else if (scope === 'formatter') {
+        files['tests.log'] = 'bun test v1.3.11\n 3010 pass\n 19 skip\n 0 fail\nRan 3029 tests across 150 files. [2.00s]\n';
+        files['checks.log'] = 'lint_exit=0\nbuild_exit=0\n';
+      } else {
+        const receipt=JSON.parse(files['acceptance.json']);receipt.archive={...candidate.archive};files['acceptance.json']=JSON.stringify(receipt);
+        files['bundle.log'] = 'Bundle assertions: 12 passed; 0 failed\n';
+      }
+    }
+    if(native) {
+      const command={
+        feature:'test --release --locked -p codex-tui --config profile.release.package.codex-tui.opt-level=1 --timings --lib status_line_command',
+        full:'test --release --locked -p codex-tui --config profile.release.package.codex-tui.opt-level=1 --timings --no-fail-fast -- --test-threads=1',
+        config:'test --release --locked -p codex-config --timings --no-fail-fast',
+        build:'build --release --locked -p codex-cli --bin codex --timings',
+      }[scope];
+      files['cargo.log']='scope='+scope+' source='+candidate.sha+' rust=1.95.0 jobs=1 release=true locked=true lto=off debug=0 tui_opt='+(scope==='config'?'n/a':'1')+' native_command=synthetic/rustup.exe run 1.95.0 cargo '+command+'\n'+files['cargo.log'];
+    }
+    filesByScope.set(scope, files); update(scope);
+  }
+  function addDistributionArtifact(scope,files) {
+      const ref=refs.find(item=>item.scope===scope),id=ref.artifact+1000,raw=evidenceZip(files);
+      const artifact={...structuredClone(artifacts.get(ref.artifact)),id,name:`codexs-${scope==='formatter'?'formatter-dist':'bundle-draft'}-${ref.validation_id}-${ref.run}-${ref.attempt}`,size_in_bytes:raw.length,digest:'sha256:'+createHash('sha256').update(raw).digest('hex')};
+      artifacts.set(id,artifact);bytes.set(id,raw);distributions.set(scope,artifact);update(scope);return id;
+  }
+  const formatterArtifact=addDistributionArtifact('formatter',{'dist/ccstatusline.js':'synthetic formatter default','package.json':'{}',LICENSE:'synthetic license'});
+  const publicRef=ref=>Object.fromEntries(['repository','run','attempt','job','artifact'].map(key=>[key,ref[key]]));
+  function sealBundleInputs(pre,artifact=formatterArtifact) {
+    const format=refs.find(ref=>ref.scope==='formatter'),receipt=JSON.parse(filesByScope.get('bundle')['acceptance.json']);
+    receipt.inputs={pre_evidence_sha256:createHash('sha256').update(require('../update/protocol.cjs').encodeRelease(pre)).digest('hex'),formatter_artifact:{...publicRef(format),artifact}};
+    filesByScope.get('bundle')['acceptance.json']=JSON.stringify(receipt);update('bundle');
+  }
+  sealBundleInputs({
+    candidate_sha:candidate.sha,upstream_sha:candidate.upstream_sha,formatter_sha:formatter.sha,
+    runs:refs.filter(ref=>ref.scope!=='bundle').flatMap(ref=>[publicRef(ref),...(ref.scope==='build'?[{...publicRef(ref),artifact:ref.binary_artifact}]:[])]),
+    suites:{quick:counts('quick'),updater:counts('updater'),installer:counts('installer'),feature:{passed:150,failed:0,ignored:0,exit:0},full:{passed:6004,failed:0,ignored:8,exit:0},config:{passed:403,failed:0,ignored:0,exit:0},formatter:counts('formatter')},build_exit:0,
+  });
+  return {
+    input: { candidate, formatter, runs: refs }, runs, jobs, artifacts, bytes,jobLogs,
+    addDistributionArtifact,sealBundleInputs,
+    replaceFiles(scope, change) { change(filesByScope.get(scope)); update(scope); },
+    setArtifactBytes(scope,raw){update(scope,raw);},
+    github: {
+      controllerSha:'c'.repeat(40),
+      async getRun(repository, id) { assertRepository(repository); return structuredClone(runs.get(id)); },
+      async getJob(repository, id) { assertRepository(repository); return structuredClone(jobs.get(id)); },
+      async getArtifact(repository, id) { assertRepository(repository); return structuredClone(artifacts.get(id)); },
+      async getJobLog(repository,id){assertRepository(repository);return jobLogs.get(id);},
+      async downloadArtifact(repository, id) { assertRepository(repository); return bytes.get(id); },
+    },
+  };
+  function assertRepository(value) { if (value !== 'TK-06/codexs') throw Error('Unexpected fixture repository'); }
+}
+module.exports.evidenceFixture = evidenceFixture;

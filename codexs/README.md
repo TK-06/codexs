@@ -15,6 +15,28 @@ The automatic-update work prepares a separate installation mode. Its pinned nati
 
 Signed production publication and enrollment are not enabled yet. Release-bundle acceptance, signing setup, remaining manual observations and one explicit enrollment approval are still required. Running the synthetic suites does not install these commands on this machine.
 
+Task 9 prepares the distribution without rebuilding unchanged accepted native source. The packager preserves the complete native/helper layout, formatter distribution and ESM metadata, licenses and operational update modules. It produces a bounded ZIP with a sorted file inventory and separate archive/file hashes. The reviewed enrollment entry and bootstrap are packaged separately; routine version archives cannot replace the pinned bootstrap.
+
+Acceptance collection verifies completed run/job attempts, exact controller/native/formatter identities, the selected job's artifact upload and digest, and actual nonzero successful suite outcomes. Pre-bundle evidence deliberately omits bundle acceptance. Final evidence must identify the exact archive tested by the completed bundle job. These packaging APIs and synthetic checks do not replace the pending hosted formatter build, real extracted-bundle smoke, publication or installation gates.
+
+Task 9 uses three separate completed workflow runs. This avoids having a running job certify its own final conclusion:
+
+| Scope | Work performed | Output |
+|---|---|---|
+| `formatter` | Quick checks and pinned formatter lint/full tests/build in parallel | Acceptance logs and complete formatter distribution |
+| `bundle` | Verify completed evidence; reuse the accepted native artifact; authenticate matching npm packages; assemble and test the extracted distribution | Bundle receipt and unsigned bundle/enrollment drafts |
+| `evidence` | Verify the completed bundle run and exact archive bytes against all earlier acceptance | Complete evidence sidecar and archive identity |
+
+Each scope requires immutable `candidate_sha`, `baseline_sha`, `formatter_sha`, stable `source_version` and `formatter_version`, and a unique `validation_id`. Bundle/evidence also take stable `product_version` (default `1.0.0`) and `evidence_request`, a JSON object of at most 16 KiB. Bundle requests contain exactly `runs` and `formatter_artifact`; evidence requests additionally require `bundle_artifact`. Artifact IDs are positive integers. Each run locator contains `scope`, `repository`, `run`, `attempt`, `job`, `artifact`, `controller_sha` and `validation_id`; the build locator additionally requires `binary_artifact`. Bundle requests include quick, feature, full, config, build and formatter locators; final requests also include bundle. Use actual completed run/job/artifact identities, never the current pending run or guessed acceptance counts.
+
+The collection jobs have only `contents:read` and `actions:read`. They do not compile Rust, publish releases, receive production signing keys or install on a real user profile. GitHub credentials are removed from the preparation process environment before package tools or candidate executables start. Registry inputs use fixed HTTPS routes, verified SHA512 integrity and the Windows-provided archive tool; package lifecycle scripts are never run. All vendor files and supplied notices are retained, including code-mode and voice resources.
+
+Quick, formatter and bundle evidence must come from the same trusted controller revision as the collecting workflow. Native reuse additionally permits the four exact previously reviewed historical job/artifact locators recorded in the controller; dispatch JSON cannot approve another controller revision. Cargo evidence must show the canonical scope invocation, and full/config summaries must have zero filtered-out cases. The bundle receipt binds the canonical pre-evidence digest and the exact formatter distribution artifact. Final collection rejects a different successful same-source run or product version rather than attributing the tested archive to those other inputs.
+
+The bundle job exercises the extracted enrollment package with an ephemeral test key, private synthetic settings/profile sentinels, real offline native smoke, both `.ps1`/`.cmd` version launchers and formatter privacy/width checks. Its provisional signed test envelope is confined to owned runner scratch and is not a release artifact. Only measured successful bundle totals enter final evidence after that run completes. The final sidecar retains the native binary, formatter distribution and tested draft artifact references. Initial production signing, activation and global enrollment remain later explicit gates.
+
+Expired or mismatched native artifacts block reuse. A private cached download cannot substitute for an expired hosted artifact; obtain separately authorized hosted build evidence if reuse is no longer available. Scope selection skips all Cargo jobs in these three modes, while existing native validation scopes keep their current resource guards.
+
 The reviewed enrollment package provides this interface:
 
 `Invoke-CodexsEnrollment -Bundle <zip> -Manifest <release.json> -Signature <release.sig> -PublicKey <public-key.pem> -NodePath <node.exe> -SettingsPath <existing-settings.json> [-Install]`
