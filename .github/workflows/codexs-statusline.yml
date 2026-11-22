@@ -1047,12 +1047,14 @@ jobs:
           const root=process.env.GITHUB_WORKSPACE,work=process.env.CODEXS_BUNDLE_WORK,draft=process.env.CODEXS_BUNDLE_DRAFT;
           const {encodeRelease}=require(path.join(root,'codexs/update/protocol.cjs'));
           const {resolveOwned,verifyInventory,hashFile}=require(path.join(root,'codexs/update/paths.cjs'));
-          let passed=0;
+          let passed=0,phase='setup';
           (async()=>{
             const isolated=resolveOwned(work,'acceptance');await fs.mkdir(isolated);
             const logs=resolveOwned(work,'logs');await fs.mkdir(logs);
+            phase='bundle-hash';
             const manifestBase=JSON.parse(await fs.readFile(path.join(draft,'manifest-base.json'),'utf8'));
             assert.equal(await hashFile(path.join(draft,'codexs-windows-x64.zip'),manifestBase.archive.bytes,'BUNDLE_HASH'),manifestBase.archive.sha256);passed++;
+            phase='enrollment-hash';
             const enrollment=JSON.parse(await fs.readFile(path.join(draft,'enrollment.json'),'utf8'));
             assert.equal(enrollment.controller_sha,process.env.GITHUB_SHA);
             assert.equal(await hashFile(path.join(draft,'codexs-enrollment.zip'),enrollment.bytes,'BUNDLE_HASH'),enrollment.sha256);passed++;
@@ -1066,8 +1068,10 @@ jobs:
             };
             const ps=async(program,env={})=>run(shell,['-NoProfile','-NonInteractive','-OutputFormat','Text','-EncodedCommand',Buffer.from("$ProgressPreference='SilentlyContinue';"+program,'utf16le').toString('base64')],{env:{...process.env,...env}});
             const extractData=Buffer.from(JSON.stringify({script:path.join(root,'codexs/update/archive.ps1'),archive:path.join(draft,'codexs-enrollment.zip'),destination:extracted,inventory,root:work})).toString('base64');
+            phase='enrollment-extraction';
             await ps("$ErrorActionPreference='Stop';$d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+extractData+"'))|ConvertFrom-Json;& ([scriptblock]::Create([IO.File]::ReadAllText($d.script))) -Archive $d.archive -Destination $d.destination -Inventory $d.inventory -AllowedRoot $d.root");
             await verifyInventory(extracted,enrollment.files);passed++;
+            phase='synthetic-settings';
             const settings=resolveOwned(isolated,'settings.json'),settingsBytes=encodeRelease({version:4,colorLevel:0,lines:[[{id:'one',type:'custom-text',customText:'synthetic footer'}]],unknown_future:{keep:true}});
             await fs.writeFile(settings,settingsBytes,{flag:'wx'});
             const home=resolveOwned(isolated,'home');await fs.mkdir(home);
@@ -1075,6 +1079,7 @@ jobs:
             for(const name of sentinels){const file=resolveOwned(home,name);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,'synthetic untouched sentinel',{flag:'wx'});}
             // This key and provisional envelope exist only in owned test scratch.
             // Actual bundle totals come from this job after it completes, in a separate run.
+            phase='test-envelope';
             const pre=JSON.parse(await fs.readFile(resolveOwned(work,'pre-bundle.json'),'utf8'));
             const evidence={...pre,suites:{...pre.suites,bundle:{passed:1,failed:0,ignored:0,exit:0}}};
             const manifest={...manifestBase,sequence:1,release_id:'codexs-v'+manifestBase.product_version+'-codex'+manifestBase.upstream.version+'-r1',evidence};
@@ -1085,21 +1090,27 @@ jobs:
             const options={AllowedRoot:isolated,InstallRoot:resolveOwned(isolated,'installed'),AllowedShimRoot:isolated,ShimRoot:resolveOwned(isolated,'shims'),PackageRoot:resolveOwned(extracted,'update'),Bundle:path.join(draft,'codexs-windows-x64.zip'),Manifest:manifestPath,Signature:signaturePath,PublicKey:keyPath,NodePath:process.execPath,SettingsPath:settings};
             const data=Buffer.from(JSON.stringify(options)).toString('base64');
             const code="$ErrorActionPreference='Stop';$d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+data+"'))|ConvertFrom-Json;$options=@{};foreach($p in $d.PSObject.Properties){$options[$p.Name]=$p.Value};. ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $d.PackageRoot 'enroll.ps1'))));$r=Invoke-CodexsEnrollmentCore $options (Get-CodexsEnrollmentOperations) -Install;if(-not $r.Installed){throw 'BUNDLE_ENROLLMENT'};[Console]::Out.WriteLine('BUNDLE_ENROLLED')";
+            phase='enrollment';
             const installed=await ps(code,{HOME:home,USERPROFILE:home,CODEX_HOME:resolveOwned(home,'.codex'),LOCALAPPDATA:home,APPDATA:home,TEMP:isolated,TMP:isolated});
+            phase='enrollment-receipt';
             assert.equal(installed.stdout.trim(),'BUNDLE_ENROLLED');passed++;
             const installedRoot=options.InstallRoot,versionDir=resolveOwned(installedRoot,'versions/'+manifest.release_id);
+            phase='installed-inventory';
             await verifyInventory(versionDir,manifest.files,{installed:true});passed++;
             const cleanEnv={SystemRoot:process.env.SystemRoot,WINDIR:process.env.SystemRoot,COMSPEC:path.join(process.env.SystemRoot,'System32/cmd.exe'),PATH:path.join(process.env.SystemRoot,'System32'),HOME:home,USERPROFILE:home,CODEX_HOME:resolveOwned(home,'.codex'),LOCALAPPDATA:home,APPDATA:home,TEMP:isolated,TMP:isolated,NO_COLOR:'1',CCSTATUSLINE_WIDTH:'80'};
             const native=resolveOwned(versionDir,'bin/codex.exe'),formatter=resolveOwned(versionDir,'formatter/dist/ccstatusline.js');
+            phase='native-smoke';
             const smoke=await run(native,['codexs-smoke','--node',process.execPath,'--formatter',formatter],{env:cleanEnv});
             assert.equal(smoke.stderr,'');assert.equal(smoke.stdout.trim(),'{"schema":1,"runner":"ok","formatter":"ok","cleanup":"ok"}');passed++;
             for(const [name,expected]of [['codexs','codexs '+manifest.product_version+' (Codex CLI '+manifest.upstream.version+')'],['codexs-statusline','codexs-statusline '+manifest.product_version]]){
               for(const extension of ['ps1','cmd']){
+                phase=name+'-'+extension+'-version';
                 const shim=resolveOwned(options.ShimRoot,name+'.'+extension);
                 const result=await ps("$ErrorActionPreference='Stop';& $env:CODEXS_TEST_SHIM --version;if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}",{...cleanEnv,CODEXS_TEST_SHIM:shim});
                 assert.equal(result.stderr,'');assert.equal(result.stdout.trim(),expected);passed++;
               }
             }
+            phase='formatter-privacy-setup';
             const guard=resolveOwned(isolated,'privacy-guard.cjs'),witness=resolveOwned(isolated,'privacy-attempts.txt');
             cleanEnv.CODEXS_PRIVACY_WITNESS=witness;
             await fs.writeFile(guard,[
@@ -1116,21 +1127,37 @@ jobs:
             await fs.writeFile(renderConfig,encodeRelease({version:4,colorLevel:0,flexMode:'full',lines:[[{id:'one',type:'custom-text',customText:marker}]]}),{flag:'wx'});
             const payload=JSON.stringify({codex:{schema:1},transcript_path:resolveOwned(home,'denied-transcript.jsonl')});
             for(const width of [12,80]){
+              phase='formatter-width-'+width;
               const result=await run(process.execPath,['--require',guard,formatter,'--config',renderConfig],{env:{...cleanEnv,CCSTATUSLINE_WIDTH:String(width)},input:payload});
               const visible=result.stdout.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').trimEnd();
               assert.equal(result.stderr,'');assert.ok(visible.length>0&&visible.length<=width);
               assert.equal(await fs.stat(witness).catch(error=>{if(error.code==='ENOENT')return null;throw error;}),null,'formatter attempted prohibited I/O');
               if(width===80)assert.equal(visible.trim(),marker);passed++;
             }
+            phase='settings-preserved';
             assert.deepEqual(await fs.readFile(settings),settingsBytes);passed++;
+            phase='sentinels-preserved';
             for(const name of sentinels)assert.equal(await fs.readFile(resolveOwned(home,name),'utf8'),'synthetic untouched sentinel');passed++;
+            phase='final-inventory';
             await verifyInventory(versionDir,manifest.files,{installed:true});passed++;
+            phase='acceptance-log';
             await fs.writeFile(resolveOwned(logs,'bundle.log'),'Bundle assertions: '+passed+' passed; 0 failed\n',{flag:'wx'});
             console.log('codexs extracted bundle acceptance passed');
           })().catch(async error=>{
-            const logs=resolveOwned(work,'logs');await fs.mkdir(logs,{recursive:true});
-            await fs.writeFile(resolveOwned(logs,'bundle.log'),'Bundle assertions: '+passed+' passed; 1 failed\n',{flag:'wx'}).catch(()=>{});
-            console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'BUNDLE_FAILED'));process.exitCode=1;
+            // Retain only reviewed codes and scalar diagnostics, never child output or paths.
+            const codes=new Set(('ERR_ASSERTION ERR_CHILD_PROCESS_STDIO_MAXBUFFER ENOENT EACCES EPERM EEXIST BUNDLE_HASH BUNDLE_ENROLLMENT SIGNATURE MANIFEST_SCHEMA MANIFEST_MISMATCH COMPATIBILITY LOW_DISK SETTINGS_HOLD PATH DOWNLOAD_HASH ARCHIVE_REJECTED EXTRACT_IO COORDINATOR_REQUIRED COORDINATOR_PROTOCOL COORDINATOR_TIMEOUT COORDINATOR_WORKER ENROLL_PATH ENROLL_NODE ENROLL_INPUT ENROLL_PACKAGE ENROLL_VERIFY ENROLL_PROTOCOL ENROLL_CONFIG ENROLL_RECOVERY_REQUIRED ENROLL_OWNER ENROLL_BUSY ENROLL_IO ENROLL_SHIM_OWNER ENROLL_SHIM_VERIFY ENROLL_EXISTS ENROLL_RUNNING ENROLL_MISMATCH ENROLL_FAILED STATE_SCHEMA STATE_COMMIT STAGE_IO STAGE_INVENTORY STAGE_PACKAGE STAGE_ARCHITECTURE STAGE_VERSION STAGE_PROBE_REQUIRED STAGE_CONFLICT STAGE_EXTRACT_REQUIRED SMOKE_ARGS SMOKE_IO SMOKE_ENV SMOKE_TIMEOUT SMOKE_OUTPUT SMOKE_CANCELLED SMOKE_RUNNER SMOKE_PROTOCOL SMOKE_RUNNER_CLEANUP SMOKE_DIRECTORY_CLEANUP SMOKE_RUNNER_AND_DIRECTORY_CLEANUP SMOKE_CLEANUP SMOKE_UNSUPPORTED SMOKE_RUNTIME').split(' '));
+            const stdout=typeof error?.stdout==='string'||Buffer.isBuffer(error?.stdout)?error.stdout:'',stderr=typeof error?.stderr==='string'||Buffer.isBuffer(error?.stderr)?error.stderr:'';
+            const output=String(stderr).slice(0,65536).replace(/_x000D_/g,'\r').replace(/_x000A_/g,'\n').replace(/<\/?(?:Objs|S)(?:\s[^<>]{0,512})?>/g,'');
+            const reported=[...output.matchAll(/(?:^|\r?\n)\s*(?:(?:\+\s*)?FullyQualifiedErrorId\s*:\s*|Error: |codexs: )?([A-Z][A-Z0-9_]{0,63})\s*(?=\r?\n|$)/g)].map(match=>match[1]).find(code=>codes.has(code));
+            const childExit=Number.isSafeInteger(error?.code)?error.code:null;
+            const code=codes.has(error?.code)?error.code:reported||(childExit===null?'BUNDLE_FAILED':'BUNDLE_CHILD_EXIT');
+            const failure={schema:1,phase,code,child_exit:childExit,killed:error?.killed===true,stdout_bytes:Buffer.byteLength(stdout),stderr_bytes:Buffer.byteLength(stderr),passed};
+            console.error('codexs: '+code);console.error('codexs bundle diagnostic: '+JSON.stringify(failure));process.exitCode=1;
+            try{
+              const logs=resolveOwned(work,'logs');await fs.mkdir(logs,{recursive:true});
+              await fs.writeFile(resolveOwned(logs,'bundle.log'),'Bundle assertions: '+passed+' passed; 1 failed\n',{flag:'wx'}).catch(()=>{});
+              await fs.writeFile(resolveOwned(logs,'failure.json'),encodeRelease(failure),{flag:'wx'});
+            }catch{}
           });
           '@
           $program | & node -

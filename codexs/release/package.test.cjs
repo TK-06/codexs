@@ -388,6 +388,18 @@ async function extractedGate(t,extra={}) {
   const fakeProcess={execPath:process.execPath,env:{...f.env,GITHUB_WORKSPACE:rootForTests(),CODEXS_BUNDLE_WORK:f.work,CODEXS_BUNDLE_DRAFT:f.draftPath},exitCode:0};
   const diagnostic=[];
   const load=name=>name==='node:util'?{...require(name),promisify(fn){const run=require(name).promisify(fn);return(file,args,options)=>{
+    if(extra.enrollmentFault&&args.includes('-EncodedCommand')){
+      const index=args.indexOf('-EncodedCommand')+1,script=Buffer.from(args[index],'base64').toString('utf16le');
+      if(script.includes('Invoke-CodexsEnrollmentCore $options')){
+        const programs={
+          known:"[Console]::Out.WriteLine('synthetic-private-output');[Console]::Error.WriteLine('synthetic-private-error C:\\synthetic\\private-home');throw 'STAGE_VERSION'",
+          unknown:"[Console]::Out.WriteLine('synthetic-private-output');[Console]::Error.WriteLine('synthetic-private-error C:\\synthetic\\private-home');exit 7",
+          receipt:"[Console]::Out.WriteLine('synthetic-private-output')",
+        };
+        assert.ok(Object.hasOwn(programs,extra.enrollmentFault),'unknown enrollment fault fixture');
+        args=[...args];args[index]=Buffer.from(programs[extra.enrollmentFault],'utf16le').toString('base64');
+      }
+    }
     const promise=run(file,args,options);promise.then(result=>{if(options.env?.CODEXS_TEST_SHIM)diagnostic.push({shim:path.basename(options.env.CODEXS_TEST_SHIM),stdout:result.stdout.trim().slice(0,200),stderr_bytes:result.stderr.length});},error=>diagnostic.push({code:error.code,codes:String(error.stderr||'').match(/(?:MANIFEST_SCHEMA|SIGNATURE|ENROLL_[A-Z_]+|LOW_DISK|STAGE_[A-Z_]+|SMOKE_[A-Z_]+|BUNDLE_[A-Z_]+)/g),powershell_id:String(error.stderr||'').match(/FullyQualifiedErrorId\s*:\s*([^\r\n]+)/)?.[1]}));return promise;
   };}}:require(name);
   await new Function('require','process',program.replace('(async()=>','return (async()=>'))(load,fakeProcess);
@@ -402,12 +414,30 @@ async function extractedGate(t,extra={}) {
     assert.equal(receipt.inputs.pre_evidence_sha256,createHash('sha256').update(await fs.readFile(path.join(f.work,'pre-bundle.json'))).digest('hex'));
     assert.equal(receipt.archive.sha256,f.manifest.archive.sha256);
   }
-  assert.ok(await fs.stat(path.join(probe.root,'probe-record')));
-  return {...f,code:fakeProcess.exitCode,log,diagnostic};
+  const probeRecord=await fs.stat(path.join(probe.root,'probe-record')).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+  if(extra.enrollmentFault)assert.equal(probeRecord,null,'failed enrollment must not reach native probes');else assert.ok(probeRecord);
+  const failureText=await fs.readFile(path.join(f.work,'logs/failure.json'),'utf8').catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+  return {...f,code:fakeProcess.exitCode,log,diagnostic,failureText};
 }
 
 test('actual extracted-bundle gate enrolls and verifies only synthetic executables through the real client',async t=>{
-  const f=await extractedGate(t);assert.equal(f.code,0,f.log+JSON.stringify(f.diagnostic));assert.match(f.log,/^Bundle assertions: [1-9]\d* passed; 0 failed\n$/);
+  const f=await extractedGate(t);assert.equal(f.code,0,f.log+JSON.stringify(f.diagnostic));assert.match(f.log,/^Bundle assertions: [1-9]\d* passed; 0 failed\n$/);assert.equal(f.failureText,null);
+});
+for(const [fault,expected]of [
+  ['known',{phase:'enrollment',code:'STAGE_VERSION',child_exit:1}],
+  ['unknown',{phase:'enrollment',code:'BUNDLE_CHILD_EXIT',child_exit:7}],
+  ['receipt',{phase:'enrollment-receipt',code:'ERR_ASSERTION',child_exit:null}],
+])test('bundle failure diagnostics preserve '+fault+' enrollment failures without private output',async t=>{
+  const f=await extractedGate(t,{enrollmentFault:fault});
+  assert.equal(f.code,1);assert.equal(f.log,'Bundle assertions: 3 passed; 1 failed\n');
+  assert.notEqual(f.failureText,null,'failed bundle must retain a bounded diagnostic artifact');
+  const failure=JSON.parse(f.failureText);
+  assert.equal(failure.schema,1);assert.equal(failure.phase,expected.phase);assert.equal(failure.code,expected.code);assert.equal(failure.child_exit,expected.child_exit);
+  assert.equal(failure.passed,3);assert.equal(failure.killed,false);
+  assert.deepEqual(Object.keys(failure).sort(),['schema','phase','code','child_exit','killed','stdout_bytes','stderr_bytes','passed'].sort());
+  if(fault!=='receipt'){assert.ok(failure.stdout_bytes>0);assert.ok(failure.stderr_bytes>0);}
+  for(const privateValue of ['synthetic-private-output','synthetic-private-error','private-home',f.root,f.work])assert.equal(f.failureText.includes(privateValue),false,'diagnostic leaked private output');
+  assert.equal(await fs.stat(path.join(f.work,'logs/acceptance.json')).catch(error=>{if(error.code==='ENOENT')return null;throw error;}),null,'failed bundle must not certify acceptance');
 });
 test('actual extracted-bundle gate works from CRLF workflow text',async t=>{
   const f=await extractedGate(t,{crlf:true});assert.equal(f.code,0,f.log+JSON.stringify(f.diagnostic));
