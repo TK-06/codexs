@@ -378,6 +378,7 @@ async function extractedGate(t,extra={}) {
   const native=await fs.readFile(path.join(probe.root,'synthetic-probe.exe'));
   const formatter=Buffer.from([
     "import fs from 'node:fs';",
+    "await WebAssembly.compile(await (await fetch('data:application/octet-stream;base64,AGFzbQEAAAA=')).arrayBuffer());",
     "if(process.argv.includes('--version')){console.log(process.argv.includes('--codex')?'codexs-statusline 1.0.0':'2.2.32');}else{let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',s=>input+=s);process.stdin.on('end',()=>{const payload=JSON.parse(input);"+(extra.privacyAttempt?"try{fs.readFileSync(payload.transcript_path);}catch{}":"")+"const config=JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--config')+1],'utf8'));console.log(config.lines[0][0].customText.slice(0,Number(process.env.CCSTATUSLINE_WIDTH||80)));});}",
   ].join('\n'));
   const f=await hostedPreparation(t,{...extra,native,formatter});
@@ -444,5 +445,51 @@ test('actual extracted-bundle gate works from CRLF workflow text',async t=>{
 });
 test('actual privacy gate rejects a caught forbidden access even when rendering succeeds',async t=>{
   const f=await extractedGate(t,{privacyAttempt:true});assert.notEqual(f.code,0,'caught privacy attempt was accepted');assert.match(f.log,/1 failed/);
+});
+
+async function guardedFormatterResource(t,program) {
+  const f=await fixture(t),workflow=await fs.readFile(path.join(rootForTests(),'.github/workflows/codexs-statusline.yml'),'utf8');
+  const guardBody=workflow.match(/await fs\.writeFile\(guard,\[([\s\S]*?)\]\.join\('\\n'\),\{flag:'wx'\}\);/);
+  assert.ok(guardBody,'missing extracted-bundle privacy guard');
+  const guard=path.join(f.root,'privacy-guard.cjs'),witness=path.join(f.root,'privacy-attempts.txt');
+  await fs.writeFile(guard,new Function('return ['+guardBody[1]+'];')().join('\n'),{flag:'wx'});
+  const {spawnSync}=require('node:child_process');
+  const result=spawnSync(process.execPath,['--require',guard,'--input-type=module','--eval',program],{
+    cwd:f.root,env:{SystemRoot:process.env.SystemRoot,CODEXS_PRIVACY_WITNESS:witness},encoding:'utf8',windowsHide:true,timeout:10000,
+  });
+  assert.equal(result.error,undefined,'guard child did not finish');
+  const attempts=await fs.readFile(witness,'utf8').catch(error=>{if(error.code==='ENOENT')return '';throw error;});
+  return {...result,attempts};
+}
+
+for(const [kind,input]of [
+  ['string',"'data:application/octet-stream;base64,AGFzbQEAAAA='"],
+  ['URL',"new URL('data:application/octet-stream;base64,AGFzbQEAAAA=')"],
+  ['Request',"new Request('data:application/octet-stream;base64,AGFzbQEAAAA=')"],
+])test('actual privacy guard allows embedded WebAssembly from a '+kind,async t=>{
+  const result=await guardedFormatterResource(t,"const response=await fetch("+input+");const bytes=await response.arrayBuffer();await WebAssembly.compile(bytes);console.log('wasm:'+bytes.byteLength);");
+  assert.equal(result.status,0,result.stderr);assert.equal(result.stderr,'');assert.equal(result.stdout,'wasm:8\n');assert.equal(result.attempts,'');
+});
+
+for(const [kind,attempt]of [
+  ['HTTP fetch',"await fetch('http://127.0.0.1:1/')"],
+  ['HTTPS fetch',"await fetch('https://127.0.0.1:1/')"],
+  ['URL fetch',"await fetch(new URL('https://127.0.0.1:1/'))"],
+  ['Request fetch',"await fetch(new Request('https://127.0.0.1:1/'))"],
+  ['misleading data fragment',"await fetch('https://127.0.0.1:1/#data:application/octet-stream;base64,AGFzbQEAAAA=')"],
+  ['spoofed request',"await fetch({url:'data:application/octet-stream;base64,AGFzbQEAAAA=',toString(){return 'https://127.0.0.1:1/';}})"],
+  ['file fetch',"await fetch('file:///synthetic-denied-resource')"],
+  ['HTTP request',"(await import('node:http')).request('http://127.0.0.1:1/')"],
+  ['HTTPS get',"(await import('node:https')).get('https://127.0.0.1:1/')"],
+  ['TCP connect',"(await import('node:net')).connect({host:'127.0.0.1',port:1})"],
+  ['socket connect',"new (await import('node:net')).Socket().connect(1,'127.0.0.1')"],
+])test('actual privacy guard still rejects '+kind,async t=>{
+  const result=await guardedFormatterResource(t,attempt);
+  assert.equal(result.status,1);assert.match(result.stderr,/Error: BUNDLE_PRIVACY/);assert.equal(result.stdout,'');assert.equal(result.attempts,'network\n');
+});
+
+for(const file of ['.claude/settings.json','denied-transcript.jsonl'])test('actual privacy guard records caught private reads of '+file,async t=>{
+  const result=await guardedFormatterResource(t,"import fs from 'node:fs';try{fs.readFileSync("+JSON.stringify(file)+");}catch{}console.log('caught');");
+  assert.equal(result.status,0);assert.equal(result.stderr,'');assert.equal(result.stdout,'caught\n');assert.equal(result.attempts,'read\n');
 });
 function rootForTests(){return path.resolve(__dirname,'../..');}

@@ -1120,7 +1120,9 @@ jobs:
               "for(const name of ['readFile','readFileSync','open','openSync','stat','statSync','lstat','lstatSync','access','accessSync','readdir','readdirSync','existsSync']){const fn=fs[name];if(fn)fs[name]=function(file,...args){deny(file);return fn.call(this,file,...args);};}",
               "for(const name of ['readFile','open','stat','lstat','access','readdir']){const fn=fs.promises[name];fs.promises[name]=function(file,...args){deny(file);return fn.call(this,file,...args);};}",
               "for(const module of ['node:http','node:https'])for(const method of ['get','request'])require(module)[method]=()=>blocked('network');",
-              "for(const method of ['connect','createConnection'])require('node:net')[method]=()=>blocked('network');require('node:net').Socket.prototype.connect=()=>blocked('network');globalThis.fetch=()=>blocked('network');require('node:module').syncBuiltinESMExports();",
+              "for(const method of ['connect','createConnection'])require('node:net')[method]=()=>blocked('network');require('node:net').Socket.prototype.connect=()=>blocked('network');",
+              // The formatter initializes embedded WebAssembly through fetch(data:), without network I/O.
+              "const localFetch=globalThis.fetch;globalThis.fetch=(input,init)=>{const target=typeof input==='string'?input:input instanceof URL?input.href:input instanceof Request?input.url:'';if(target.startsWith('data:'))return localFetch(target,init);return blocked('network');};require('node:module').syncBuiltinESMExports();",
             ].join('\n'),{flag:'wx'});
             const renderConfig=resolveOwned(isolated,'render.json');
             const marker='synthetic-footer-abcdefghijklmnopqrstuvwxyz';
