@@ -23,6 +23,53 @@ function verify(release, overrides = {}) {
   return api().verifyRelease(bytes, signature(bytes), keys.publicKey, { ...policy, ...overrides });
 }
 
+test('task10 schema: accepts a frozen valid unsigned release without mutation', () => {
+  const release = releaseManifest(), before = structuredClone(release);
+  function freeze(value) {
+    if (value && typeof value === 'object') {
+      for (const child of Object.values(value)) freeze(child);
+      Object.freeze(value);
+    }
+    return value;
+  }
+  assert.equal(api().validateRelease(freeze(release), { ...policy, nodeMajor: 22 }), undefined);
+  assert.deepEqual(release, before);
+});
+
+for (const suite of ['quick', 'feature', 'full', 'config', 'formatter', 'updater', 'installer', 'bundle']) {
+  for (const [kind, change] of [
+    ['missing', release => { delete release.evidence.suites[suite]; }],
+    ['zero', release => { release.evidence.suites[suite].passed = 0; }],
+    ['failed', release => { release.evidence.suites[suite].failed = 1; }],
+    ['nonzero exit', release => { release.evidence.suites[suite].exit = 101; }],
+  ]) test('task10 schema: rejects ' + kind + ' ' + suite + ' before signing', () => {
+    const release = releaseManifest(); change(release);
+    assert.throws(() => api().validateRelease(release, policy), { name: 'UpdateError', code: 'MANIFEST_SCHEMA' });
+  });
+}
+
+for (const [kind, change] of [
+  ['native identity', release => { release.evidence.candidate_sha = 'f'.repeat(40); }],
+  ['upstream identity', release => { release.evidence.upstream_sha = 'f'.repeat(40); }],
+  ['formatter identity', release => { release.evidence.formatter_sha = 'f'.repeat(40); }],
+  ['extra field', release => { release.command = 'synthetic-command'; }],
+  ['archive size', release => { release.archive.bytes = 256 * 1024 ** 2 + 1; }],
+  ['archive digest', release => { release.archive.sha256 = 'short'; }],
+  ['failed build', release => { release.evidence.build_exit = 1; }],
+]) test('task10 schema: rejects ' + kind + ' before signing', () => {
+  const release = releaseManifest(); change(release);
+  assert.throws(() => api().validateRelease(release, policy), { name: 'UpdateError', code: 'MANIFEST_SCHEMA' });
+});
+
+test('task10 schema: rejects unsupported Node before signing', () => {
+  assert.throws(() => api().validateRelease(releaseManifest(), { ...policy, nodeMajor: 21 }), { code: 'COMPATIBILITY' });
+});
+
+test('task10 schema: rejects unsupported bootstrap before signing', () => {
+  const release = releaseManifest(); release.bootstrap_min = 2;
+  assert.throws(() => api().validateRelease(release, { ...policy, bootstrap: 1 }), { code: 'COMPATIBILITY' });
+});
+
 test('verifies an authentic Ed25519 release and exact source identities', () => {
   const release = releaseManifest();
   assert.deepEqual(verify(release), release);

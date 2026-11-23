@@ -43,10 +43,17 @@ function identities(input) {
   object(input,['nativeTree','formatterDist','formatterPackage','overlay','preBundleEvidence'],'PACKAGE_INPUT');
   const {nativeTree:native,formatterPackage:formatter,overlay}=input;
   object(native,['root','sha','upstream','packages','productVersion'],'PACKAGE_INPUT');
-  object(formatter,['path','sha','version'],'PACKAGE_INPUT');object(overlay,['sha','metadata'],'PACKAGE_INPUT');
+  object(formatter,['path','sha','version'],'PACKAGE_INPUT');object(overlay,['sha','metadata',...(overlay&&Object.hasOwn(overlay,'candidate')?['candidate']:[])],'PACKAGE_INPUT');
   object(native.upstream,['version','tag','sha'],'PACKAGE_IDENTITY');
   object(overlay.metadata,['schema','base_sha','accepted_sha','patch_sha256','paths','formatter_sha','required_suites'],'PACKAGE_IDENTITY');
-  if(!matches(native.sha,SHA)||!matches(formatter.sha,SHA)||!matches(overlay.sha,SHA)||!matches(native.upstream.sha,SHA)||!version(native.productVersion)||!version(native.upstream.version)||native.upstream.tag!==`rust-v${native.upstream.version}`||overlay.metadata.schema!==1||overlay.metadata.base_sha!==native.upstream.sha||overlay.metadata.accepted_sha!==native.sha||!matches(overlay.metadata.patch_sha256,HASH)||!Array.isArray(overlay.metadata.paths)||!overlay.metadata.paths.length)fail('PACKAGE_IDENTITY');
+  if(!matches(native.sha,SHA)||!matches(formatter.sha,SHA)||!matches(overlay.sha,SHA)||!matches(native.upstream.sha,SHA)||!version(native.productVersion)||!version(native.upstream.version)||native.upstream.tag!==`rust-v${native.upstream.version}`||overlay.metadata.schema!==1||!matches(overlay.metadata.base_sha,SHA)||!matches(overlay.metadata.accepted_sha,SHA)||!matches(overlay.metadata.patch_sha256,HASH)||!Array.isArray(overlay.metadata.paths)||!overlay.metadata.paths.length)fail('PACKAGE_IDENTITY');
+  if(Object.hasOwn(overlay,'candidate')) {
+    const proof=overlay.candidate,code='PACKAGE_IDENTITY';
+    object(proof,['candidate_sha','upstream_sha','overlay_sha','patch_sha256','paths'],code);
+    if(proof.candidate_sha!==native.sha||proof.upstream_sha!==native.upstream.sha||proof.overlay_sha!==overlay.sha||proof.patch_sha256!==overlay.metadata.patch_sha256||!matches(proof.patch_sha256,HASH)||
+       !Array.isArray(proof.paths)||!proof.paths.length||new Set(proof.paths.map(name=>typeof name==='string'?name.toLowerCase():name)).size!==proof.paths.length||
+       proof.paths.some(name=>typeof name!=='string'||!name.startsWith('codex-rs/')||name.includes('\\')||name.split('/').some(part=>!part||part==='.'||part==='..')||/\.(?:snap(?:\.new)?|pending-snap)$/i.test(name)||!overlay.metadata.paths.includes(name)))fail(code);
+  } else if(overlay.metadata.base_sha!==native.upstream.sha||overlay.metadata.accepted_sha!==native.sha)fail('PACKAGE_IDENTITY');
   if(overlay.metadata.formatter_sha!==formatter.sha||!Array.isArray(overlay.metadata.required_suites)||overlay.metadata.required_suites.length!==4||new Set(overlay.metadata.required_suites).size!==4||!['feature','full','config','build'].every(name=>overlay.metadata.required_suites.includes(name)))fail('PACKAGE_IDENTITY');
   object(native.packages,['main','helper'],'PACKAGE_METADATA');
   for(const [name,pkg]of Object.entries(native.packages)) {

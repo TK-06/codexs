@@ -63,6 +63,37 @@ test('identical inputs produce identical ZIP bytes and file inventories', async 
   assert.deepEqual(await fs.readFile(a.archivePath),await fs.readFile(b.archivePath));
 });
 
+function futureCandidate(input) {
+  input.nativeTree.upstream.sha='c'.repeat(40);input.preBundleEvidence.upstream_sha='c'.repeat(40);
+  input.overlay.metadata.accepted_sha='f'.repeat(40);
+  input.overlay.candidate={candidate_sha:'b'.repeat(40),upstream_sha:'c'.repeat(40),overlay_sha:input.overlay.sha,patch_sha256:'e'.repeat(64),paths:['codex-rs/cli/src/main.rs']};
+}
+
+test('task10 candidate: packages a new base with verified provenance while preserving frozen metadata',async t=>{
+  const f=await fixture(t);futureCandidate(f.input);const frozen=structuredClone(f.input.overlay.metadata);
+  const draft=await assembleBundle(f.input,f.outputRoot);
+  assert.equal(draft.manifestBase.native_sha,'b'.repeat(40));assert.equal(draft.manifestBase.upstream.sha,'c'.repeat(40));
+  assert.equal(draft.manifestBase.overlay_sha,f.input.overlay.sha);assert.deepEqual(f.input.overlay.metadata,frozen);
+});
+
+for(const [name,mutate]of [
+  ['missing proof',input=>{delete input.overlay.candidate;}],
+  ['null proof',input=>{input.overlay.candidate=null;}],
+  ['wrong candidate',input=>{input.overlay.candidate.candidate_sha='f'.repeat(40);}],
+  ['wrong upstream',input=>{input.overlay.candidate.upstream_sha='f'.repeat(40);}],
+  ['wrong controller',input=>{input.overlay.candidate.overlay_sha='f'.repeat(40);}],
+  ['wrong patch',input=>{input.overlay.candidate.patch_sha256='f'.repeat(64);}],
+  ['coercible patch',input=>{input.overlay.candidate.patch_sha256=[input.overlay.candidate.patch_sha256];}],
+  ['outside paths',input=>{input.overlay.candidate.paths=['outside.txt'];}],
+  ['empty paths',input=>{input.overlay.candidate.paths=[];}],
+  ['pending snapshot',input=>{input.overlay.candidate.paths=['codex-rs/tui/src/a.snap.new'];}],
+  ['unknown proof field',input=>{input.overlay.candidate.command='synthetic-untrusted-command';}],
+])test('task10 candidate: assembly rejects '+name,async t=>{
+  const f=await fixture(t);futureCandidate(f.input);mutate(f.input);
+  await assert.rejects(assembleBundle(f.input,f.outputRoot),{code:'PACKAGE_IDENTITY'});
+  assert.equal(await fs.stat(f.outputRoot).catch(error=>{if(error.code==='ENOENT')return null;throw error;}),null);
+});
+
 for(const name of ['bin/codex.exe','codex-package.json','codex-path/rg.exe','codex-resources/codex-command-runner.exe','codex-resources/codex-windows-sandbox-setup.exe','packages/helper/package.json','licenses/helpers/LICENSE']) {
   test('assembly rejects missing native input '+name,async t=>{
     const f=await fixture(t);await fs.unlink(path.join(f.nativeRoot,...name.split('/')));

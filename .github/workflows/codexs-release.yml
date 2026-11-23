@@ -1,0 +1,266 @@
+name: codexs accepted stable release
+
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        required: true
+        type: string
+      baseline_sha:
+        required: true
+        type: string
+      source_version:
+        required: true
+        type: string
+      formatter_sha:
+        required: true
+        type: string
+      formatter_version:
+        required: true
+        type: string
+      product_version:
+        required: true
+        type: string
+      mode:
+        required: false
+        type: string
+        default: validate
+      native_reuse_request:
+        required: false
+        type: string
+        default: ''
+    secrets:
+      CODEXS_RELEASE_SIGNING_KEY:
+        required: false
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: 'candidate_sha'
+        required: true
+        type: string
+      baseline_sha:
+        description: 'baseline_sha'
+        required: true
+        type: string
+      source_version:
+        description: 'source_version'
+        required: true
+        type: string
+      formatter_sha:
+        description: 'formatter_sha'
+        required: true
+        type: string
+      formatter_version:
+        description: 'formatter_version'
+        required: true
+        type: string
+      product_version:
+        description: 'product_version'
+        required: true
+        type: string
+      mode:
+        description: 'mode'
+        required: false
+        type: choice
+        default: validate
+        options: [validate, initial, routine]
+      native_reuse_request:
+        description: 'Explicit approved native locators; empty means fresh tests'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  policy:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      validate: ${{ steps.policy.outputs.validate }}
+      publish: ${{ steps.policy.outputs.publish }}
+    steps:
+      - name: Checkout trusted controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install controller Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Authorize release mode
+        id: policy
+        shell: powershell
+        env:
+          CODEXS_MODE: ${{ inputs.mode }}
+          CODEXS_UPDATES_ENABLED: ${{ vars.CODEXS_UPDATES_ENABLED }}
+          CODEXS_RELEASES_ENABLED: ${{ vars.CODEXS_RELEASES_ENABLED }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path');
+          const {authorizeRun}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/controller.cjs'));
+          (async()=>{
+            const e=process.env,context={repository:e.GITHUB_REPOSITORY,eventName:e.GITHUB_EVENT_NAME,ref:e.GITHUB_REF,workflowRef:e.GITHUB_WORKFLOW_REF,mode:e.CODEXS_MODE||'validate',updatesEnabled:e.CODEXS_UPDATES_ENABLED||'',releasesEnabled:e.CODEXS_RELEASES_ENABLED||'',controllerSha:e.GITHUB_SHA};
+            const policy=authorizeRun(context);
+            await fs.appendFile(e.GITHUB_OUTPUT,'validate='+policy.validate+'\npublish='+policy.publish+'\n');
+          })().catch(error=>{console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'CONTROLLER_POLICY'));process.exitCode=1;});
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Release policy failed'}
+
+  acceptance:
+    needs: [policy]
+    if: needs.policy.result == 'success' && needs.policy.outputs.validate == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      actions: write
+    outputs:
+      gate: ${{ steps.acceptance.outputs.gate }}
+    steps:
+      - name: Checkout trusted controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install controller Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Run completed acceptance
+        id: acceptance
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEXS_INPUT: ${{ toJSON(inputs) }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path');
+          const {runAcceptance,createControllerPorts,PRODUCT_VERSION}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/controller.cjs'));
+          (async()=>{
+            const e=process.env;if(!e.CODEXS_INPUT||Buffer.byteLength(e.CODEXS_INPUT)>32768)throw Error('CONTROLLER_POLICY');
+            const input=JSON.parse(e.CODEXS_INPUT);if(input.product_version!==PRODUCT_VERSION)throw Error('CONTROLLER_POLICY');
+            const ports=createControllerPorts({token:e.GH_TOKEN,controllerSha:e.GITHUB_SHA}),dispatch=ports.dispatch;
+            ports.dispatch=async request=>{console.log('codexs dispatch intent '+request.scope+' '+request.inputs.validation_id);const result=await dispatch(request);console.log('codexs dispatched '+request.scope+' run='+result.runId);return result;};
+            const gate=await runAcceptance({controllerSha:e.GITHUB_SHA,candidateSha:input.candidate_sha,upstreamSha:input.baseline_sha,sourceVersion:input.source_version,formatterSha:input.formatter_sha,formatterVersion:input.formatter_version,productVersion:input.product_version,mode:input.mode||'validate',parentRunId:Number(e.GITHUB_RUN_ID),parentAttempt:Number(e.GITHUB_RUN_ATTEMPT),nativeReuse:input.native_reuse_request?JSON.parse(input.native_reuse_request):null},ports);
+            await fs.appendFile(e.GITHUB_OUTPUT,'gate='+JSON.stringify(gate)+'\n');
+          })().catch(error=>{console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'ACCEPTANCE_IDENTITY'));process.exitCode=1;});
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Completed acceptance failed'}
+
+  publish:
+    needs: [policy, acceptance]
+    if: needs.policy.result == 'success' && needs.acceptance.result == 'success' && needs.policy.outputs.publish == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: codexs-stable-publisher
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install controller Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Stage accepted publication data
+        id: stage
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEXS_INPUT: ${{ toJSON(inputs) }}
+          CODEXS_GATE: ${{ needs.acceptance.outputs.gate }}
+          CODEXS_MODE: ${{ inputs.mode }}
+          CODEXS_UPDATES_ENABLED: ${{ vars.CODEXS_UPDATES_ENABLED }}
+          CODEXS_RELEASES_ENABLED: ${{ vars.CODEXS_RELEASES_ENABLED }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
+          const {authorizeRun,PRODUCT_VERSION}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/controller.cjs'));
+          const {createControlClient}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/publish.cjs'));
+          const {collectEvidence,createGithubClient,downloadDistributionArtifact}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/evidence.cjs'));
+          const {encodeRelease,validateRelease,UpdateError}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/update/protocol.cjs'));
+          const {validateInventory}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/update/paths.cjs'));
+          (async()=>{
+            const e=process.env,fail=code=>{throw new UpdateError(code);},hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
+            const context={repository:e.GITHUB_REPOSITORY,eventName:e.GITHUB_EVENT_NAME,ref:e.GITHUB_REF,workflowRef:e.GITHUB_WORKFLOW_REF,mode:e.CODEXS_MODE||'validate',updatesEnabled:e.CODEXS_UPDATES_ENABLED||'',releasesEnabled:e.CODEXS_RELEASES_ENABLED||'',controllerSha:e.GITHUB_SHA};
+            if(!authorizeRun(context).publish)fail('CONTROLLER_POLICY');
+            if(!e.CODEXS_GATE||Buffer.byteLength(e.CODEXS_GATE)>32768||!e.CODEXS_INPUT||Buffer.byteLength(e.CODEXS_INPUT)>32768)fail('ACCEPTANCE_IDENTITY');
+            const input=JSON.parse(e.CODEXS_INPUT),gate=JSON.parse(e.CODEXS_GATE),final=gate.final,github=createGithubClient({token:e.GH_TOKEN,controllerSha:e.GITHUB_SHA});
+            if(input.product_version!==PRODUCT_VERSION||!final||Object.keys(final).sort().join(',')!=='artifact,attempt,controller_sha,job,repository,run,validation_id'||final.repository!=='TK-06/codexs'||final.controller_sha!==e.GITHUB_SHA||final.attempt!==1||!['run','job','artifact'].every(key=>Number.isSafeInteger(final[key])&&final[key]>0)||!/^[a-z][a-z0-9-]{0,31}$/.test(final.validation_id))fail('ACCEPTANCE_IDENTITY');
+            await createControlClient({token:e.GH_TOKEN,controllerSha:e.GITHUB_SHA}).main();
+            const run=await github.getRun(final.repository,final.run,1),job=await github.getJob(final.repository,final.job),artifact=await github.getArtifact(final.repository,final.artifact),name='codexs-task9-evidence-'+final.validation_id+'-'+final.run+'-1';
+            if(run.id!==final.run||run.run_attempt!==1||run.head_sha!==e.GITHUB_SHA||run.repository?.full_name!==final.repository||run.event!=='workflow_dispatch'||run.path!=='.github/workflows/codexs-statusline.yml'||run.status!=='completed'||run.conclusion!=='success'||job.id!==final.job||job.run_id!==final.run||job.run_attempt!==1||job.head_sha!==e.GITHUB_SHA||job.name!=='Complete release evidence'||job.status!=='completed'||job.conclusion!=='success'||!Array.isArray(job.steps)||job.steps.filter(step=>step.name==='Collect completed exact-archive evidence'&&step.status==='completed'&&step.conclusion==='success').length!==1)fail('ACCEPTANCE_IDENTITY');
+            if(artifact.id!==final.artifact||artifact.name!==name||artifact.expired!==false||artifact.workflow_run?.id!==final.run||artifact.workflow_run?.head_sha!==e.GITHUB_SHA||!Number.isSafeInteger(artifact.size_in_bytes)||artifact.size_in_bytes<1||artifact.size_in_bytes>4*1024**2||!/^sha256:[a-f0-9]{64}$/.test(artifact.digest))fail('EVIDENCE_ARTIFACT');
+            const log=await github.getJobLog(final.repository,final.job),finalBytes=await github.downloadArtifact(final.repository,final.artifact,{maxBytes:4*1024**2});
+            if(finalBytes.length!==artifact.size_in_bytes||hash(finalBytes)!==artifact.digest.slice(7)||!log.includes('SHA256 digest of uploaded artifact is '+artifact.digest.slice(7))||!log.includes('Artifact '+name+' successfully finalized. Artifact ID '+final.artifact)||!log.includes('Artifact '+name+' has been successfully uploaded! Final size is '+finalBytes.length+' bytes. Artifact ID is '+final.artifact))fail('EVIDENCE_ARTIFACT');
+            const request=gate.request,ref=request.runs.find(ref=>ref.scope==='bundle'),format=request.runs.find(ref=>ref.scope==='formatter');
+            const files=await downloadDistributionArtifact({ref,kind:'bundle',artifact:request.bundle_artifact},github),base=JSON.parse(files.get('manifest-base.json').toString('utf8')),archive=files.get('codexs-windows-x64.zip');
+            if(base.native_sha!==input.candidate_sha||base.upstream.sha!==input.baseline_sha||base.upstream.version!==input.source_version||base.overlay_sha!==e.GITHUB_SHA||base.formatter.sha!==input.formatter_sha||base.formatter.version!==input.formatter_version||base.product_version!==input.product_version||base.archive.bytes!==archive.length||base.archive.sha256!==hash(archive))fail('EVIDENCE_ARCHIVE');
+            const candidate={sha:base.native_sha,upstream_sha:base.upstream.sha,version:base.upstream.version,archive:{bytes:base.archive.bytes,sha256:base.archive.sha256}},formatter={sha:base.formatter.sha,version:base.formatter.version};
+            const evidence=await collectEvidence({candidate,formatter,runs:request.runs},github);
+            await downloadDistributionArtifact({ref:format,kind:'formatter',artifact:request.formatter_artifact},github);
+            if(!evidence.runs.some(selected=>selected.run===format.run&&selected.attempt===format.attempt&&selected.job===format.job&&selected.artifact===request.formatter_artifact))fail('EVIDENCE_BINDING');
+            evidence.runs.push({repository:ref.repository,run:ref.run,attempt:ref.attempt,job:ref.job,artifact:request.bundle_artifact});
+            validateRelease({...base,sequence:1,release_id:'codexs-v'+base.product_version+'-codex'+base.upstream.version+'-r1',evidence},{nodeMajor:22,bootstrap:1});
+            const enrollment=JSON.parse(files.get('enrollment.json').toString('utf8')),enrollmentZip=files.get('codexs-enrollment.zip');
+            if(Object.keys(enrollment).sort().join(',')!=='bytes,controller_sha,files,sha256'||enrollment.controller_sha!==e.GITHUB_SHA||enrollment.bytes!==enrollmentZip.length||enrollment.sha256!==hash(enrollmentZip))fail('EVIDENCE_ARCHIVE');
+            validateInventory(enrollment.files);
+            delete e.GH_TOKEN;delete e.GITHUB_TOKEN;
+            const parent=await fs.realpath(e.RUNNER_TEMP),output=await fs.mkdtemp(path.join(parent,'codexs-publish-'));
+            if(path.dirname(output)!==parent||/[\r\n]/.test(output))fail('EVIDENCE_ARCHIVE');
+            for(const [name,bytes]of files)await fs.writeFile(path.join(output,name),bytes,{flag:'wx'});
+            await fs.writeFile(path.join(output,'evidence.json'),encodeRelease(evidence),{flag:'wx'});
+            await fs.appendFile(e.GITHUB_OUTPUT,'data_root='+output+'\n');
+            console.log('codexs exact accepted publication data staged');
+          })().catch(error=>{console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'EVIDENCE_IO'));process.exitCode=1;});
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Publication preflight failed'}
+      - name: Sign and publish accepted bytes
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEXS_DATA_ROOT: ${{ steps.stage.outputs.data_root }}
+          CODEXS_RELEASE_PUBLIC_KEY: ${{ vars.CODEXS_RELEASE_PUBLIC_KEY }}
+          CODEXS_RELEASE_SIGNING_KEY: ${{ secrets.CODEXS_RELEASE_SIGNING_KEY }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path');
+          const {readBoundedFile}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/update/paths.cjs'));
+          const {publishStable,createPublisherPorts}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/publish.cjs'));
+          (async()=>{
+            const e=process.env,parent=await fs.realpath(e.RUNNER_TEMP),root=await fs.realpath(e.CODEXS_DATA_ROOT);
+            if(path.dirname(root)!==parent||!path.basename(root).startsWith('codexs-publish-')||root!==e.CODEXS_DATA_ROOT)throw Error('PUBLISH_ARCHIVE');
+            const base=JSON.parse((await readBoundedFile(path.join(root,'manifest-base.json'))).toString('utf8')),evidence=JSON.parse((await readBoundedFile(path.join(root,'evidence.json'))).toString('utf8'));
+            const result=await publishStable({bundle:{archivePath:path.join(root,'codexs-windows-x64.zip'),manifestBase:base},evidence,keyRef:'CODEXS_RELEASE_SIGNING_KEY'},createPublisherPorts({token:e.GH_TOKEN,keyRef:'CODEXS_RELEASE_SIGNING_KEY',publicKey:e.CODEXS_RELEASE_PUBLIC_KEY,bundleRoot:root,controllerSha:e.GITHUB_SHA}));
+            console.log('codexs published '+result.tag+' release='+result.releaseId);
+          })().catch(error=>{console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'PUBLISH_KEY'));process.exitCode=1;});
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Stable publication failed'}

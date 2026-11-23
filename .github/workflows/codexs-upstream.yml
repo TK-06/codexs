@@ -1,0 +1,197 @@
+name: codexs stable upstream controller
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: codexs-upstream-controller
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    if: github.repository == 'TK-06/codexs' && github.ref == 'refs/heads/main' && vars.CODEXS_UPDATES_ENABLED == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      ready: ${{ steps.discover.outputs.ready }}
+      upstream: ${{ steps.discover.outputs.upstream }}
+    steps:
+      - name: Checkout trusted controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install controller Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Discover stable upstream
+        id: discover
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEXS_MODE: routine
+          CODEXS_UPDATES_ENABLED: ${{ vars.CODEXS_UPDATES_ENABLED }}
+          CODEXS_RELEASES_ENABLED: ${{ vars.CODEXS_RELEASES_ENABLED }}
+          CODEXS_RELEASE_PUBLIC_KEY: ${{ vars.CODEXS_RELEASE_PUBLIC_KEY }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path');
+          const {authorizeRun,createControllerPorts}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/controller.cjs'));
+          const {discoverUpstream,createControlClient,createPublisherPorts}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/publish.cjs'));
+          const {verifyRelease,encodeRelease}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/update/protocol.cjs'));
+          (async()=>{
+            const e=process.env,context={repository:e.GITHUB_REPOSITORY,eventName:e.GITHUB_EVENT_NAME,ref:e.GITHUB_REF,workflowRef:e.GITHUB_WORKFLOW_REF,mode:'routine',updatesEnabled:e.CODEXS_UPDATES_ENABLED||'',releasesEnabled:e.CODEXS_RELEASES_ENABLED||'',controllerSha:e.GITHUB_SHA};
+            if(!authorizeRun(context).prepare){await fs.appendFile(e.GITHUB_OUTPUT,'ready=false\n');return;}
+            const options={token:e.GH_TOKEN,controllerSha:e.GITHUB_SHA};
+            const upstream=await discoverUpstream(createControllerPorts(options));
+            if(!upstream){await fs.appendFile(e.GITHUB_OUTPUT,'ready=false\n');return;}
+            const client=createControlClient(options);await client.main();
+            const latest=await client.json('/repos/TK-06/codexs/releases/latest',{nullable:true});
+            if(latest){
+              const release=latest.value;if(release.draft!==false||release.prerelease!==false||!Array.isArray(release.assets))throw Error('PUBLISH_IMMUTABLE');
+              const ports=createPublisherPorts({...options,keyRef:'CODEXS_RELEASE_SIGNING_KEY',publicKey:e.CODEXS_RELEASE_PUBLIC_KEY,bundleRoot:e.RUNNER_TEMP});
+              const read=async(name,maxBytes)=>{const assets=release.assets.filter(asset=>asset.name===name);if(assets.length!==1)throw Error('PUBLISH_IMMUTABLE');return ports.readAsset({kind:'release',releaseId:release.id,assetId:assets[0].id,name,maxBytes});};
+              const accepted=verifyRelease(await read('release.json',4*1024**2),await read('release.sig',64),e.CODEXS_RELEASE_PUBLIC_KEY,{nodeMajor:22,bootstrap:1});
+              if(accepted.release_id!==release.tag_name)throw Error('PUBLISH_IMMUTABLE');
+              if(accepted.upstream.version===upstream.version){
+                if(accepted.upstream.sha!==upstream.sha||!encodeRelease(accepted.packages).equals(encodeRelease(upstream.packages)))throw Error('PUBLISH_SUPERSEDED');
+                await fs.appendFile(e.GITHUB_OUTPUT,'ready=false\n');return;
+              }
+            }
+            await fs.appendFile(e.GITHUB_OUTPUT,'ready=true\nupstream='+JSON.stringify(upstream)+'\n');
+          })().catch(error=>{console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'CONTROLLER_POLICY'));process.exitCode=1;});
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Stable discovery failed'}
+
+  prepare_candidate:
+    needs: [discover]
+    if: needs.discover.result == 'success' && needs.discover.outputs.ready == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      candidate_sha: ${{ steps.prepare.outputs.candidate_sha }}
+      baseline_sha: ${{ steps.prepare.outputs.baseline_sha }}
+      source_version: ${{ steps.prepare.outputs.source_version }}
+      formatter_sha: ${{ steps.prepare.outputs.formatter_sha }}
+      formatter_version: ${{ steps.prepare.outputs.formatter_version }}
+      product_version: ${{ steps.prepare.outputs.product_version }}
+    steps:
+      - name: Checkout trusted controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve frozen formatter
+        id: formatter
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $metadata=Get-Content -LiteralPath 'codexs/upstream/overlay.json' -Raw | ConvertFrom-Json
+          if($metadata.formatter_sha -cnotmatch '^[a-f0-9]{40}$'){throw 'Invalid frozen formatter'}
+          "sha=$($metadata.formatter_sha)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Checkout frozen formatter manifest
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: TK-06/ccstatusline
+          ref: ${{ steps.formatter.outputs.sha }}
+          path: formatter-source
+          persist-credentials: false
+      - name: Install controller Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Prepare dedicated candidate
+        id: prepare
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEXS_EXPECTED_UPSTREAM: ${{ needs.discover.outputs.upstream }}
+          CODEXS_UPDATES_ENABLED: ${{ vars.CODEXS_UPDATES_ENABLED }}
+          CODEXS_RELEASES_ENABLED: ${{ vars.CODEXS_RELEASES_ENABLED }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
+          const execFile=require('node:util').promisify(require('node:child_process').execFile);
+          const {authorizeRun,prepareUpdate,verifyCandidate,PRODUCT_VERSION,createControllerPorts}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/controller.cjs'));
+          const {createControlClient}=require(path.join(process.env.GITHUB_WORKSPACE,'codexs/release/publish.cjs'));
+          (async()=>{
+            const e=process.env,context={repository:e.GITHUB_REPOSITORY,eventName:e.GITHUB_EVENT_NAME,ref:e.GITHUB_REF,workflowRef:e.GITHUB_WORKFLOW_REF,mode:'routine',updatesEnabled:e.CODEXS_UPDATES_ENABLED||'',releasesEnabled:e.CODEXS_RELEASES_ENABLED||'',controllerSha:e.GITHUB_SHA};
+            if(!authorizeRun(context).prepare)throw Error('CONTROLLER_POLICY');
+            const root=e.GITHUB_WORKSPACE,metadata=JSON.parse(await fs.readFile(path.join(root,'codexs/upstream/overlay.json'),'utf8')),patch=await fs.readFile(path.join(root,'codexs/upstream/overlay.patch'));
+            if(crypto.createHash('sha256').update(patch).digest('hex')!==metadata.patch_sha256)throw Error('OVERLAY_IDENTITY');
+            const formatterRoot=path.join(root,'formatter-source'),manifest=JSON.parse(await fs.readFile(path.join(formatterRoot,'package.json'),'utf8'));
+            const parent=await fs.realpath(e.RUNNER_TEMP),workspace=await fs.mkdtemp(path.join(parent,'codexs-candidate-'));
+            if(path.dirname(workspace)!==parent||/[\r\n]/.test(workspace))throw Error('WORKSPACE');
+            await fs.writeFile(path.join(workspace,'.codexs-owned-workspace'),'codexs-candidate-workspace-v1\n',{flag:'wx'});
+            await fs.writeFile(path.join(workspace,'.codexs-empty-gitconfig'),'',{flag:'wx'});
+            const client=createControlClient({token:e.GH_TOKEN,controllerSha:e.GITHUB_SHA}),ports=createControllerPorts({token:e.GH_TOKEN,controllerSha:e.GITHUB_SHA});
+            const childEnv={PATH:e.PATH,Path:e.Path,SystemRoot:e.SystemRoot,COMSPEC:e.COMSPEC,TEMP:workspace,TMP:workspace,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(workspace,'.codexs-empty-gitconfig'),GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'Never'};
+            async function git(args,cwd,authenticate=false){
+              if(cwd!==workspace&&cwd!==formatterRoot)throw Error('WORKSPACE');
+              const env={...childEnv};if(authenticate){env.GIT_CONFIG_COUNT='1';env.GIT_CONFIG_KEY_0='http.https://github.com/.extraheader';env.GIT_CONFIG_VALUE_0='AUTHORIZATION: basic '+Buffer.from('x-access-token:'+e.GH_TOKEN).toString('base64');}
+              const result=await execFile('git',['-c','core.hooksPath='+path.join(workspace,'.codexs-disabled-hooks'),'-c','http.followRedirects=false',...args],{cwd,env,windowsHide:true,timeout:120000,maxBuffer:16*1024**2});return result.stdout;
+            }
+            if((await git(['rev-parse','HEAD'],formatterRoot)).trim()!==metadata.formatter_sha)throw Error('CONTROLLER_POLICY');
+            async function getJson(url){if(!url.startsWith('https://api.github.com/repos/TK-06/codexs/'))throw Error('CANDIDATE_IDENTITY');const result=await client.json(url.slice('https://api.github.com'.length),{nullable:true});if(result?.hasNext)throw Error('CANDIDATE_PROVENANCE');return result?.value||null;}
+            const expected=JSON.parse(e.CODEXS_EXPECTED_UPSTREAM);
+            const result=await prepareUpdate({context,overlay:{...metadata,revision:e.GITHUB_SHA,patch_bytes:patch},formatter:{sha:metadata.formatter_sha,version:manifest.version},workspace},{
+              ...ports,getJson,git,readFile:file=>fs.readFile(file,'utf8'),writeFile:(file,bytes)=>fs.writeFile(file,bytes),
+              readFormatterManifest:async sha=>{if(sha!==metadata.formatter_sha)throw Error('CONTROLLER_POLICY');return manifest;},
+              resolveTag:async tag=>{const sha=await ports.resolveTag(tag);if(tag!==expected.tag||sha!==expected.sha)throw Error('UPSTREAM_IDENTITY');return sha;},
+              publishCandidate:async({workspace:owned,branch,candidateSha})=>{
+                if(owned!==workspace||branch!=='automation/upstream/'+expected.version+'-'+e.GITHUB_SHA.slice(0,12)||!/^[a-f0-9]{40}$/.test(candidateSha))throw Error('CANDIDATE_IDENTITY');
+                const record=(await git(['show','--no-patch','--format=%H%n%P%n%B',candidateSha],workspace)).trimEnd().split('\n'),changed=(await git(['diff','--name-only',expected.sha,candidateSha,'--'],workspace)).trim().split(/\r?\n/);
+                verifyCandidate({candidateSha,upstreamSha:expected.sha,controllerSha:e.GITHUB_SHA,overlay:metadata},{repository:'TK-06/codexs',sha:record[0],parents:record[1].split(' '),message:record.slice(2).join('\n'),files:changed.map(filename=>({filename,status:'modified'})),complete:true});
+                const existing=await getJson('https://api.github.com/repos/TK-06/codexs/git/ref/heads/'+branch);
+                if(existing){if(existing.object?.sha!==candidateSha)throw Error('CANDIDATE_IDENTITY');return;}
+                await client.main();
+                await git(['push','--no-verify','https://github.com/TK-06/codexs.git',candidateSha+':refs/heads/'+branch],workspace,true);
+                const after=await getJson('https://api.github.com/repos/TK-06/codexs/git/ref/heads/'+branch);if(after?.object?.sha!==candidateSha)throw Error('CANDIDATE_IDENTITY');
+                await client.main();
+              },
+            });
+            if(!result)throw Error('UPSTREAM_IDENTITY');
+            const values={candidate_sha:result.candidate.candidate_sha,baseline_sha:result.upstream.sha,source_version:result.upstream.version,formatter_sha:result.formatter.sha,formatter_version:result.formatter.version,product_version:PRODUCT_VERSION};
+            await fs.appendFile(e.GITHUB_OUTPUT,Object.entries(values).map(([key,value])=>key+'='+value+'\n').join(''));
+          })().catch(error=>{console.error('codexs: '+(error&&/^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)?error.code:'PREPARATION_IO'));process.exitCode=1;});
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Candidate preparation failed'}
+
+  validate_release:
+    needs: [prepare_candidate]
+    if: needs.prepare_candidate.result == 'success'
+    permissions:
+      contents: write
+      actions: write
+    uses: ./.github/workflows/codexs-release.yml
+    with:
+      candidate_sha: ${{ needs.prepare_candidate.outputs.candidate_sha }}
+      baseline_sha: ${{ needs.prepare_candidate.outputs.baseline_sha }}
+      source_version: ${{ needs.prepare_candidate.outputs.source_version }}
+      formatter_sha: ${{ needs.prepare_candidate.outputs.formatter_sha }}
+      formatter_version: ${{ needs.prepare_candidate.outputs.formatter_version }}
+      product_version: ${{ needs.prepare_candidate.outputs.product_version }}
+      mode: routine
+    secrets:
+      CODEXS_RELEASE_SIGNING_KEY: ${{ secrets.CODEXS_RELEASE_SIGNING_KEY }}

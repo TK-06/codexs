@@ -236,4 +236,4 @@ function assertFresh(release, manifestHash, state) {
       (release.sequence === state.highest.sequence && manifestHash !== state.highest.manifest_sha256))) fail('REPLAY');
 }
 
-module.exports = { UpdateError, encodeRelease, verifyRelease, assertFresh, parseState };
+module.exports = { UpdateError, encodeRelease, validateRelease, verifyRelease, assertFresh, parseState };

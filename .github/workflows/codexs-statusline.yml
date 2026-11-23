@@ -997,6 +997,7 @@ jobs:
           const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
           const root=process.env.GITHUB_WORKSPACE;
           const {collectPreBundleEvidence,createGithubClient,downloadDistributionArtifact}=require(path.join(root,'codexs/release/evidence.cjs'));
+          const {loadCandidateProof}=require(path.join(root,'codexs/release/controller.cjs'));
           const {assembleBundle,assembleEnrollmentPackage,prepareNativeTree,fetchOfficialPackages}=require(path.join(root,'codexs/release/package.cjs'));
           const {encodeRelease}=require(path.join(root,'codexs/update/protocol.cjs'));
           const {resolveOwned}=require(path.join(root,'codexs/update/paths.cjs'));
@@ -1009,6 +1010,9 @@ jobs:
             const build=request.runs.find(ref=>ref.scope==='build'),format=request.runs.find(ref=>ref.scope==='formatter');
             const native=await downloadDistributionArtifact({ref:build,kind:'native',artifact:build.binary_artifact},github);
             const formatted=await downloadDistributionArtifact({ref:format,kind:'formatter',artifact:request.formatter_artifact},github);
+            const metadata=JSON.parse(await fs.readFile(path.join(root,'codexs/upstream/overlay.json'),'utf8'));
+            if(crypto.createHash('sha256').update(await fs.readFile(path.join(root,'codexs/upstream/overlay.patch'))).digest('hex')!==metadata.patch_sha256)throw Error('OVERLAY_HASH');
+            const candidateProof=metadata.base_sha===candidate.upstream_sha&&metadata.accepted_sha===candidate.sha?null:await loadCandidateProof({candidateSha:candidate.sha,upstreamSha:candidate.upstream_sha,controllerSha:process.env.GITHUB_SHA,overlay:metadata},{token:process.env.GH_TOKEN});
             delete process.env.GH_TOKEN;delete process.env.GITHUB_TOKEN;
             const parent=await fs.realpath(process.env.RUNNER_TEMP),work=await fs.mkdtemp(path.join(parent,'cx9-'));
             const bundleInputs={pre_evidence_sha256:crypto.createHash('sha256').update(encodeRelease(preBundleEvidence)).digest('hex'),formatter_artifact:{repository:format.repository,run:format.run,attempt:format.attempt,job:format.job,artifact:request.formatter_artifact}};
@@ -1018,9 +1022,7 @@ jobs:
             nativeTree.productVersion=process.env.CODEXS_PRODUCT_VERSION;
             const formatterRoot=resolveOwned(work,'formatter-inputs');await fs.mkdir(formatterRoot);
             for(const [name,bytes]of formatted){const file=resolveOwned(formatterRoot,name);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,bytes,{flag:'wx'});}
-            const metadata=JSON.parse(await fs.readFile(path.join(root,'codexs/upstream/overlay.json'),'utf8'));
-            if(crypto.createHash('sha256').update(await fs.readFile(path.join(root,'codexs/upstream/overlay.patch'))).digest('hex')!==metadata.patch_sha256)throw Error('OVERLAY_HASH');
-            const draft=await assembleBundle({nativeTree,formatterDist:resolveOwned(formatterRoot,'dist'),formatterPackage:{path:resolveOwned(formatterRoot,'package.json'),...formatter},overlay:{sha:process.env.GITHUB_SHA,metadata},preBundleEvidence},resolveOwned(work,'output'));
+            const draft=await assembleBundle({nativeTree,formatterDist:resolveOwned(formatterRoot,'dist'),formatterPackage:{path:resolveOwned(formatterRoot,'package.json'),...formatter},overlay:{sha:process.env.GITHUB_SHA,metadata,...(candidateProof?{candidate:candidateProof}:{})},preBundleEvidence},resolveOwned(work,'output'));
             const enrollment=await assembleEnrollmentPackage({controllerSha:process.env.GITHUB_SHA},resolveOwned(work,'enrollment'));
             const exportRoot=resolveOwned(work,'export');await fs.mkdir(exportRoot);
             await fs.copyFile(draft.archivePath,path.join(exportRoot,'codexs-windows-x64.zip'),require('node:fs').constants.COPYFILE_EXCL);

@@ -6,10 +6,152 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { fixtureTempRoot, evidenceFixture } = require('../test-support/update-fixtures.cjs');
+const { fixtureTempRoot, evidenceFixture,footerOverlay,upstreamPackages,releaseManifest } = require('../test-support/update-fixtures.cjs');
 
 const root = path.resolve(__dirname, '../..');
 const source = fs.readFileSync(path.join(root, '.github/workflows/codexs-statusline.yml'), 'utf8').replace(/\r\n?/g,'\n');
+
+function automaticWorkflow(name){return fs.readFileSync(path.join(root,'.github/workflows/codexs-'+name+'.yml'),'utf8').replace(/\r\n?/g,'\n');}
+function automaticProgram(workflow,job,name){const shell=jobStepBody(job,name,automaticWorkflow(workflow)),match=shell.match(/\$program=@'\n([\s\S]*?)\n'@/);assert.ok(match,'actual Node boundary required');return match[1];}
+async function runAutomatic(workflow,job,name,{env={},load=require}={}){
+  const program=automaticProgram(workflow,job,name),processFixture={env:{GITHUB_WORKSPACE:root,GITHUB_REPOSITORY:'TK-06/codexs',GITHUB_REF:'refs/heads/main',GITHUB_WORKFLOW_REF:'TK-06/codexs/.github/workflows/codexs-'+workflow+'.yml@refs/heads/main',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_SHA:'c'.repeat(40),GITHUB_RUN_ID:'900',GITHUB_RUN_ATTEMPT:'1',CODEXS_MODE:'validate',CODEXS_UPDATES_ENABLED:'',CODEXS_RELEASES_ENABLED:'',...env},exitCode:0},messages=[];
+  const value=new Function('require','process','console',program.replace('(async()=>','return (async()=>'))(load,processFixture,{log:value=>messages.push(value),error:value=>messages.push(value)});
+  await value;return {process:processFixture,messages};
+}
+
+test('task10 workflow: disabled discovery executes its actual guard without invoking any port',async()=>{
+  for(const flag of ['', 'false','True']){
+    let ports=0;const result=await runAutomatic('upstream','discover','Discover stable upstream',{env:{CODEXS_MODE:'routine',CODEXS_UPDATES_ENABLED:flag},load:name=>name===path.join(root,'codexs/release/controller.cjs')?{...require(name),createControllerPorts:()=>{ports++;throw Error('forbidden');}}:name==='node:fs/promises'?{appendFile:async()=>{}}:require(name)});
+    assert.equal(result.process.exitCode,0);assert.equal(ports,0);
+  }
+});
+
+test('task10 workflow: actual policy gate separates validation initial and routine publication',async()=>{
+  for(const [mode,event,flag,publish]of [['validate','workflow_dispatch','true',false],['initial','workflow_dispatch','false',true],['initial','workflow_call','true',false],['routine','workflow_call','false',false],['routine','workflow_call','true',true]]){
+    let output='';const result=await runAutomatic('release','policy','Authorize release mode',{env:{CODEXS_MODE:mode,GITHUB_EVENT_NAME:event,CODEXS_RELEASES_ENABLED:flag},load:name=>name==='node:fs/promises'?{appendFile:async(file,text)=>{output+=text;}}:require(name)});
+    assert.equal(result.process.exitCode,0);assert.ok(output.includes('publish='+publish));
+  }
+});
+
+test('task10 workflow: dependency graph pins actions and isolates the only signing environment',()=>{
+  const upstream=automaticWorkflow('upstream'),release=automaticWorkflow('release');
+  assert.match(upstream,/cron: '17 \*\/6 \* \* \*'/);assert.match(upstream,/group: codexs-upstream-controller\n  cancel-in-progress: false/);
+  for(const text of [upstream,release]){assert.doesNotMatch(text,/secrets: inherit/);for(const use of text.matchAll(/uses: ([^\n#]+)/g))assert.match(use[1].trim(),/^(?:\.\/\.github\/workflows\/codexs-release.yml|actions\/(?:checkout|setup-node|upload-artifact)@[a-f0-9]{40})$/);}
+  const jobs=[...release.matchAll(/^  ([a-z_]+):\n([\s\S]*?)(?=^  [a-z_]+:|$(?![\s\S]))/gm)].filter(match=>match[2].includes('runs-on:'));
+  assert.deepEqual(jobs.filter(match=>/CODEXS_RELEASE_SIGNING_KEY: \$\{\{ secrets\./.test(match[2])).map(match=>match[1]),['publish']);
+  const publish=jobs.find(match=>match[1]==='publish')[2];assert.match(publish,/needs: \[policy, acceptance\]/);assert.match(publish,/needs\.acceptance\.result == 'success'/);assert.match(publish,/needs\.policy\.outputs\.publish == 'true'/);assert.match(publish,/group: codexs-stable-publisher\n      cancel-in-progress: false/);
+  assert.ok(publish.indexOf('Stage accepted publication data')<publish.indexOf('CODEXS_RELEASE_SIGNING_KEY:'));
+  const signing=automaticProgram('release','publish','Sign and publish accepted bytes');assert.doesNotMatch(signing,/child_process|execFile|spawn|extract|prepareCandidate|prepareNativeTree|npm |cargo /);assert.match(signing,/publishStable/);
+  assert.match(upstream,/secrets:\n      CODEXS_RELEASE_SIGNING_KEY: \$\{\{ secrets.CODEXS_RELEASE_SIGNING_KEY \}\}/);
+});
+
+test('task10 workflow: orchestration uses its actual inputs and does not expose a key',async()=>{
+  const input={candidate_sha:'b'.repeat(40),baseline_sha:'a'.repeat(40),source_version:'0.166.0',formatter_sha:'d'.repeat(40),formatter_version:'2.2.32',product_version:'1.0.0',mode:'validate',native_reuse_request:''};let received,output='';
+  const result=await runAutomatic('release','acceptance','Run completed acceptance',{env:{CODEXS_INPUT:JSON.stringify(input),GH_TOKEN:'synthetic-token'},load:name=>{
+    if(name==='node:fs/promises')return {appendFile:async(file,text)=>{output+=text;}};
+    if(name===path.join(root,'codexs/release/controller.cjs'))return {...require(name),createControllerPorts:()=>({dispatch:async()=>{}}),runAcceptance:async actual=>{received=actual;return {request:{},final:{}};}};
+    return require(name);
+  }});
+  assert.equal(result.process.exitCode,0);assert.equal(received.candidateSha,input.candidate_sha);assert.equal(received.parentRunId,900);assert.equal(received.nativeReuse,null);assert.equal(output.startsWith('gate='),true);assert.equal(automaticProgram('release','acceptance','Run completed acceptance').includes('RELEASE_SIGNING_KEY'),false);
+});
+
+test('task10 workflow: LF and CRLF retain identical automatic entry programs',()=>{
+  for(const [workflow,job,name]of [['upstream','discover','Discover stable upstream'],['upstream','prepare_candidate','Prepare dedicated candidate'],['release','policy','Authorize release mode'],['release','acceptance','Run completed acceptance'],['release','publish','Stage accepted publication data'],['release','publish','Sign and publish accepted bytes']]){
+    const text=automaticWorkflow(workflow);assert.equal(jobStepBody(job,name,text),jobStepBody(job,name,text.replace(/\n/g,'\r\n')));
+  }
+});
+
+test('task10 workflow: discovery skips an already signed accepted stable version regardless of object key order',async()=>{
+  const crypto=require('node:crypto'),protocol=require('../update/protocol.cjs'),manifest=releaseManifest(),keys=crypto.generateKeyPairSync('ed25519'),bytes=protocol.encodeRelease(manifest),signature=crypto.sign(null,Buffer.concat([Buffer.from('codexs-release-v1\0'),bytes]),keys.privateKey);let output='';
+  const result=await runAutomatic('upstream','discover','Discover stable upstream',{env:{CODEXS_UPDATES_ENABLED:'true',CODEXS_RELEASE_PUBLIC_KEY:keys.publicKey.export({type:'spki',format:'pem'})},load:name=>{
+    if(name==='node:fs/promises')return {appendFile:async(file,text)=>{output+=text;}};
+    if(name===path.join(root,'codexs/release/controller.cjs'))return {...require(name),createControllerPorts:()=>({})};
+    if(name===path.join(root,'codexs/release/publish.cjs'))return {...require(name),discoverUpstream:async()=>({version:manifest.upstream.version,tag:manifest.upstream.tag,sha:manifest.upstream.sha,packages:{main:manifest.packages.main,helper:manifest.packages.helper}}),createControlClient:()=>({main:async()=>{},json:async()=>({value:{id:1,tag_name:manifest.release_id,draft:false,prerelease:false,assets:[{id:2,name:'release.json'},{id:3,name:'release.sig'}]}})}),createPublisherPorts:()=>({readAsset:async source=>source.name==='release.json'?bytes:signature})};
+    return require(name);
+  }});
+  assert.equal(result.process.exitCode,0,result.messages.join('|'));assert.equal(output,'ready=false\n');
+});
+
+async function actualCandidateWriter({changedMain=false,conflictingRef=false}={}){
+  const metadata=footerOverlay(),patch=metadata.patch_bytes;delete metadata.revision;delete metadata.patch_bytes;
+  const temporary=path.join(os.tmpdir(),"synthetic owned ไทย %PATH%! apostrophe'"),owned=path.join(temporary,'codexs-candidate-synthetic'),candidate='f'.repeat(40),controller='c'.repeat(40),gitCalls=[],written=new Map(),packages=upstreamPackages();let published=false,output='';
+  const message='codexs-upstream:v1\nupstream_sha='+'a'.repeat(40)+'\noverlay_sha='+controller+'\npatch_sha256='+metadata.patch_sha256;
+  const fakeFS={
+    realpath:async value=>value,mkdtemp:async()=>owned,
+    writeFile:async(file,bytes)=>{written.set(file,bytes);},appendFile:async(file,text)=>{output+=text;},
+    readFile:async file=>{if(written.has(file))return written.get(file);if(file===path.join(root,'codexs/upstream/overlay.json'))return JSON.stringify(metadata);if(file===path.join(root,'codexs/upstream/overlay.patch'))return patch;if(file===path.join(root,'formatter-source/package.json'))return '{"version":"2.2.32"}';if(file.endsWith(path.join('tui','Cargo.toml')))return '[package]\nname = "codex-tui"\nversion.workspace = true\n';if(file.endsWith('Cargo.lock'))return 'version = 4\n\n[[package]]\nname = "codex-tui"\nversion = "0.0.0"\n';if(file.endsWith('Cargo.toml'))return '[workspace]\nmembers = ["tui"]\n[workspace.package]\nversion = "0.166.0"\n';throw Error('unexpected owned fixture read');},
+  };
+  const execFile=async(file,args,options)=>{
+    gitCalls.push({file,args:[...args],options});const command=args.slice(4);let stdout='';
+    if(command[0]==='rev-parse')stdout=options.cwd===owned?candidate:metadata.formatter_sha;
+    if(command[0]==='diff')stdout=metadata.paths.join('\n');if(command[0]==='show')stdout=candidate+'\n'+'a'.repeat(40)+'\n'+message+'\n';if(command[0]==='push')published=true;
+    return {stdout,stderr:''};
+  };
+  const transport=async url=>new Response(JSON.stringify(url.includes('/heads/main')?{object:{sha:changedMain?'e'.repeat(40):controller}}:url.includes('/git/ref/heads/')?(published?{object:{sha:candidate}}:conflictingRef?{object:{sha:'e'.repeat(40)}}:null):{message:'unrelated'}),{status:!url.includes('/heads/main')&&!published&&!conflictingRef?404:200});
+  const ports={listUpstreamReleases:async()=>({releases:[{tag_name:'rust-v0.166.0',draft:false,prerelease:false}],hasNext:false}),resolveTag:async()=> 'a'.repeat(40),getPackage:async version=>version.endsWith('-win32-x64')?packages.helper:packages.main};
+  const result=await runAutomatic('upstream','prepare_candidate','Prepare dedicated candidate',{env:{RUNNER_TEMP:temporary,CODEXS_UPDATES_ENABLED:'true',GH_TOKEN:'synthetic-token',CODEXS_EXPECTED_UPSTREAM:JSON.stringify({version:'0.166.0',tag:'rust-v0.166.0',sha:'a'.repeat(40)})},load:name=>{
+    if(name==='node:fs/promises')return fakeFS;if(name==='node:util')return {promisify:()=>execFile};if(name==='node:child_process')return {execFile:()=>{throw Error('unpromisified execution forbidden');}};
+    if(name===path.join(root,'codexs/release/controller.cjs'))return {...require(name),createControllerPorts:()=>ports};if(name===path.join(root,'codexs/release/publish.cjs'))return {...require(name),createControlClient:options=>require(name).createControlClient({...options,fetch:transport})};return require(name);
+  }});
+  return {result,gitCalls,owned,published,output};
+}
+
+test('task10 workflow: candidate writer preserves special paths in argument vectors and publishes only the derived ref',async()=>{
+  const f=await actualCandidateWriter();assert.equal(f.result.process.exitCode,0,f.result.messages.join('|'));assert.equal(f.published,true);
+  const push=f.gitCalls.filter(call=>call.args.includes('push'));assert.equal(push.length,1);assert.deepEqual(push[0].args.slice(-4),['push','--no-verify','https://github.com/TK-06/codexs.git','f'.repeat(40)+':refs/heads/automation/upstream/0.166.0-'+'c'.repeat(12)]);
+  for(const call of f.gitCalls){assert.equal(call.file,'git');assert.equal(call.options.shell,undefined);assert.equal(call.args.some(arg=>arg==='--force'||arg.startsWith('+')),false);assert.equal(JSON.stringify(call.args).includes('synthetic-token'),false);assert.equal(call.options.env.CODEXS_RELEASE_SIGNING_KEY,undefined);}
+  assert.equal(push[0].options.cwd,f.owned);assert.ok(push[0].options.env.GIT_CONFIG_VALUE_0.startsWith('AUTHORIZATION: basic '));assert.match(f.output,/candidate_sha=ffffffff/);
+});
+
+for(const failure of ['changedMain','conflictingRef'])test('task10 workflow: actual candidate writer blocks '+failure+' without a push',async()=>{
+  const f=await actualCandidateWriter({[failure]:true});assert.notEqual(f.result.process.exitCode,0);assert.equal(f.published,false);
+});
+
+function publicationWorkflowFixture(){
+  const f=evidenceFixture(),crypto=require('node:crypto'),protocol=require('../update/protocol.cjs'),hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
+  const base=releaseManifest(),archive=Buffer.from('synthetic runtime ZIP data, never executed'),enrollmentZip=Buffer.from('synthetic controller ZIP data, never executed');delete base.sequence;delete base.release_id;delete base.evidence;base.archive={name:'codexs-windows-x64.zip',bytes:archive.length,sha256:hash(archive)};
+  const enrollment={controller_sha:'c'.repeat(40),bytes:enrollmentZip.length,sha256:hash(enrollmentZip),files:[{path:'update/bootstrap.cjs',bytes:1,sha256:'1'.repeat(64)}]};
+  f.input.candidate.archive={bytes:archive.length,sha256:hash(archive)};f.replaceFiles('bundle',files=>{const receipt=JSON.parse(files['acceptance.json']);receipt.archive={...f.input.candidate.archive};files['acceptance.json']=JSON.stringify(receipt);});
+  const entries={'codexs-windows-x64.zip':archive,'manifest-base.json':protocol.encodeRelease(base),'codexs-enrollment.zip':enrollmentZip,'enrollment.json':protocol.encodeRelease(enrollment)};
+  const bundleArtifact=f.addDistributionArtifact('bundle',entries),format=f.input.runs.find(ref=>ref.scope==='formatter');
+  const final={repository:'TK-06/codexs',run:170,attempt:1,controller_sha:'c'.repeat(40),validation_id:'synthetic-evidence',job:171,artifact:172},finalBytes=Buffer.from('synthetic completed final artifact');
+  f.runs.set(final.run,{...f.runs.get(110),id:170});f.jobs.set(final.job,{...f.jobs.get(161),id:171,run_id:170,name:'Complete release evidence',steps:[{name:'Collect completed exact-archive evidence',status:'completed',conclusion:'success'}]});
+  const name='codexs-task9-evidence-synthetic-evidence-170-1';f.artifacts.set(final.artifact,{id:172,name,expired:false,workflow_run:{id:170,head_sha:'c'.repeat(40)},size_in_bytes:finalBytes.length,digest:'sha256:'+hash(finalBytes)});f.bytes.set(172,finalBytes);
+  f.jobLogs.set(171,'SHA256 digest of uploaded artifact is '+hash(finalBytes)+'\nArtifact '+name+' successfully finalized. Artifact ID 172\nArtifact '+name+' has been successfully uploaded! Final size is '+finalBytes.length+' bytes. Artifact ID is 172');
+  const gate={request:{runs:f.input.runs,formatter_artifact:format.artifact+1000,bundle_artifact:bundleArtifact},final},input={candidate_sha:base.native_sha,baseline_sha:base.upstream.sha,source_version:base.upstream.version,formatter_sha:base.formatter.sha,formatter_version:base.formatter.version,product_version:base.product_version,mode:'initial',native_reuse_request:''};
+  const parent=path.join(os.tmpdir(),'synthetic-publication-parent'),owned=path.join(parent,'codexs-publish-synthetic'),writes=new Map();let output='';
+  const fakeFS={realpath:async value=>value,mkdtemp:async()=>owned,writeFile:async(file,bytes)=>{writes.set(file,Buffer.from(bytes));},appendFile:async(file,text)=>{output+=text;}};
+  const env={CODEXS_MODE:'initial',CODEXS_INPUT:JSON.stringify(input),CODEXS_GATE:JSON.stringify(gate),GH_TOKEN:'synthetic-token',RUNNER_TEMP:parent};
+  const load=name=>{if(name==='node:fs/promises')return fakeFS;if(name===path.join(root,'codexs/release/evidence.cjs'))return {...require(name),createGithubClient:()=>f.github};if(name===path.join(root,'codexs/release/publish.cjs'))return {...require(name),createControlClient:()=>({main:async()=>{}})};return require(name);};
+  return {f,base,archive,enrollment,enrollmentZip,entries,gate,input,env,load,writes,owned,output:()=>output,reseal:()=>f.addDistributionArtifact('bundle',entries)};
+}
+
+test('task10 workflow: pre-key script recomputes all eight suites and stages only the accepted bytes',async()=>{
+  const f=publicationWorkflowFixture(),result=await runAutomatic('release','publish','Stage accepted publication data',f);
+  assert.equal(result.process.exitCode,0,result.messages.join('|'));assert.equal(result.process.env.GH_TOKEN,undefined);assert.equal(result.process.env.CODEXS_RELEASE_SIGNING_KEY,undefined);assert.equal(f.writes.size,5);
+  const evidence=JSON.parse(f.writes.get(path.join(f.owned,'evidence.json')));assert.equal(Object.keys(evidence.suites).length,8);assert.equal(evidence.build_exit,0);assert.deepEqual(f.writes.get(path.join(f.owned,'codexs-windows-x64.zip')),f.archive);
+  assert.equal(f.output(),'data_root='+f.owned+'\n');
+});
+
+for(const name of ['wrong final head','unfinished final','changed final bytes','zero discovery','changed runtime bytes','wrong enrollment'])test('task10 workflow: pre-key script rejects '+name+' without staging',async()=>{
+  const f=publicationWorkflowFixture();
+  if(name==='wrong final head')f.f.runs.get(170).head_sha='e'.repeat(40);if(name==='unfinished final')f.f.runs.get(170).status='in_progress';if(name==='changed final bytes')f.f.bytes.set(172,Buffer.from('substituted'));
+  if(name==='zero discovery')f.f.replaceFiles('feature',files=>{files['cargo.log']=files['cargo.log'].replace('150 passed','0 passed');});
+  if(name==='changed runtime bytes'){f.entries['codexs-windows-x64.zip']=Buffer.from('different runtime');f.reseal();}
+  if(name==='wrong enrollment'){f.enrollment.controller_sha='e'.repeat(40);f.entries['enrollment.json']=require('../update/protocol.cjs').encodeRelease(f.enrollment);f.reseal();}
+  const result=await runAutomatic('release','publish','Stage accepted publication data',f);assert.notEqual(result.process.exitCode,0);assert.equal(f.writes.size,0);
+});
+
+test('task10 workflow: signing entry passes staged data through the real data-only publisher',async()=>{
+  const f=publicationWorkflowFixture(),stage=await runAutomatic('release','publish','Stage accepted publication data',f);assert.equal(stage.process.exitCode,0,stage.messages.join('|'));
+  const crypto=require('node:crypto'),keys=crypto.generateKeyPairSync('ed25519'),assets=new Map(),release={id:1,tag:'',body:'',draft:true,prerelease:false,assets:[]};let signed=0,promoted=0;
+  const ports={controllerSha:'c'.repeat(40),publicKey:keys.publicKey,listReleases:async()=>({releases:[],tags:[]}),createDraft:async({tag,body})=>{release.tag=tag;release.body=body;return structuredClone(release);},upload:async({name,bytes})=>{const asset={id:assets.size+1,name,size:bytes.length};assets.set(asset.id,Buffer.from(bytes));release.assets.push(asset);return asset;},readAsset:async source=>source.kind==='local'?f.writes.get(source.path):assets.get(source.assetId),makeStable:async()=>{promoted++;return {...release,draft:false};},sign:async(keyRef,bytes)=>{assert.equal(keyRef,'CODEXS_RELEASE_SIGNING_KEY');signed++;return crypto.sign(null,bytes,keys.privateKey);},latestUpstream:async()=>({...f.base.upstream,packages:f.base.packages})};
+  const result=await runAutomatic('release','publish','Sign and publish accepted bytes',{env:{RUNNER_TEMP:f.env.RUNNER_TEMP,CODEXS_DATA_ROOT:f.owned,GH_TOKEN:'synthetic-token',CODEXS_RELEASE_PUBLIC_KEY:keys.publicKey.export({type:'spki',format:'pem'}),CODEXS_RELEASE_SIGNING_KEY:'synthetic-reference-only'},load:name=>{
+    if(name==='node:fs/promises')return {realpath:async value=>value};if(name===path.join(root,'codexs/update/paths.cjs'))return {...require(name),readBoundedFile:async file=>f.writes.get(file)};
+    if(name===path.join(root,'codexs/release/publish.cjs'))return {...require(name),createPublisherPorts:options=>{assert.equal(options.bundleRoot,f.owned);assert.equal(options.controllerSha,'c'.repeat(40));assert.equal(options.keyRef,'CODEXS_RELEASE_SIGNING_KEY');return ports;}};return require(name);
+  }});
+  assert.equal(result.process.exitCode,0,result.messages.join('|'));assert.equal(signed,1);assert.equal(promoted,1);assert.equal(assets.size,5);
+});
 
 function step(name) {
   const lines = source.split(/\r?\n/);
@@ -131,6 +273,44 @@ function jobStepBody(job,name,text=source) {
   const body=chunk.match(/^        run: \|\r?\n((?:          [^\r\n]*(?:\r?\n|$)|\r?\n)+)/m);
   assert.ok(body,'missing actual job script: '+name);return body[1].replace(/^          /gm,'');
 }
+
+async function candidateBundlePreflight(kind) {
+  const shell=jobStepBody('bundle_acceptance','Prepare verified bundle inputs');
+  const match=shell.match(/\$program=@'\n([\s\S]*?)\n'@/);assert.ok(match,'missing actual bundle preparation program');
+  const program=match[1],end=program.indexOf('const parent=await fs.realpath');assert.ok(end>0,'missing native preparation boundary');
+  const patch=Buffer.from('synthetic trusted overlay');
+  const metadata={schema:1,base_sha:'a'.repeat(40),accepted_sha:'e'.repeat(40),patch_sha256:require('node:crypto').createHash('sha256').update(patch).digest('hex'),paths:['codex-rs/cli/src/main.rs'],formatter_sha:'f'.repeat(40),required_suites:['feature','full','config','build']};
+  if(kind==='frozen'){metadata.base_sha='c'.repeat(40);metadata.accepted_sha='b'.repeat(40);}
+  let requests=0;
+  const fakeProcess={env:{GITHUB_WORKSPACE:root,GITHUB_SHA:'d'.repeat(40),GH_TOKEN:'synthetic-token',CODEXS_NATIVE_SHA:'b'.repeat(40),CODEXS_UPSTREAM_SHA:'c'.repeat(40),CODEXS_SOURCE_VERSION:'0.166.0',CODEXS_FORMATTER_SHA:'f'.repeat(40),CODEXS_FORMATTER_VERSION:'2.2.32',CODEXS_EVIDENCE_REQUEST:JSON.stringify({runs:[{scope:'build',binary_artifact:1},{scope:'formatter'}],formatter_artifact:2})}};
+  const load=name=>{
+    if(name==='node:fs/promises')return {readFile:async file=>{if(file===path.join(root,'codexs/upstream/overlay.json'))return JSON.stringify(metadata);if(file===path.join(root,'codexs/upstream/overlay.patch'))return patch;throw Error('Unexpected preflight file read');}};
+    if(name===path.join(root,'codexs/release/evidence.cjs'))return {createGithubClient:()=>({}),collectPreBundleEvidence:async()=>({}),downloadDistributionArtifact:async()=>new Map()};
+    if(name===path.join(root,'codexs/release/controller.cjs')){
+      const actual=require(name);return {...actual,loadCandidateProof:(context,options)=>actual.loadCandidateProof(context,{...options,fetch:async()=>{
+        requests++;
+        const bytes=Buffer.from(JSON.stringify({sha:'b'.repeat(40),parents:[{sha:(kind==='bad'?'a':'c').repeat(40)}],commit:{message:'codexs-upstream:v1\nupstream_sha='+'c'.repeat(40)+'\noverlay_sha='+'d'.repeat(40)+'\npatch_sha256='+metadata.patch_sha256},files:[{filename:'codex-rs/cli/src/main.rs',status:'modified'}]}));
+        return {status:200,headers:new Headers(),body:(async function*(){yield bytes;})()};
+      }})};
+    }
+    return require(name);
+  };
+  const front=program.slice(0,end).replace('(async()=>','return (async()=>')+"return {token_present:Object.hasOwn(process.env,'GH_TOKEN')};})()";
+  const result=await new Function('require','process',front)(load,fakeProcess);
+  return {...result,requests};
+}
+
+test('task10 candidate: actual bundle preflight rejects an unproven future candidate before native preparation',async()=>{
+  await assert.rejects(candidateBundlePreflight('bad'),{code:'CANDIDATE_PROVENANCE'});
+});
+
+test('task10 candidate: actual bundle preflight verifies future provenance before removing credentials',async()=>{
+  assert.deepEqual(await candidateBundlePreflight('future'),{token_present:false,requests:1});
+});
+
+test('task10 candidate: actual bundle preflight retains the accepted frozen candidate path',async()=>{
+  assert.deepEqual(await candidateBundlePreflight('frozen'),{token_present:false,requests:0});
+});
 
 test('actual Bash workflow bodies remain identical after a Windows CRLF checkout',()=>{
   const crlf=source.replace(/\r?\n/g,'\r\n');
