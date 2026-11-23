@@ -339,8 +339,16 @@ test('task10 ports: shared upstream error codes survive the publisher boundary w
 
 test('task10 ports: control and streamed asset deadlines abort incomplete bodies',async t=>{
   const f=await publisherHTTPFixture(t),ports=api().createPublisherPorts(f.options),budgets=[];
-  const timeout=AbortSignal.timeout;
-  t.mock.method(AbortSignal,'timeout',milliseconds=>{budgets.push(milliseconds);return timeout(10);});
+  const timers=new Set();
+  t.after(()=>{for(const timer of timers)clearTimeout(timer);});
+  // Mock streams own no I/O handle; keep each synthetic deadline referenced.
+  const timeout=milliseconds=>{
+    budgets.push(milliseconds);
+    const controller=new AbortController();
+    const timer=setTimeout(()=>{timers.delete(timer);controller.abort(new DOMException('Synthetic deadline','TimeoutError'));},10);
+    timers.add(timer);return controller.signal;
+  };
+  t.mock.method(AbortSignal,'timeout',timeout);
   f.transport=async()=>new Response(new ReadableStream({start(){}}));
   await assert.rejects(ports.listReleases(),{code:'PUBLISH_NETWORK'});
   assert.ok(budgets.includes(15000));
@@ -350,7 +358,7 @@ test('task10 ports: control and streamed asset deadlines abort incomplete bodies
     await syntheticKey(local,()=>api().publishStable(local.input,real));
     const saved=local.transport,asset=local.state.releases.find(item=>item.id===91).assets[0];
     local.transport=(url,options)=>new URL(url).hostname==='release-assets.githubusercontent.com'?Promise.resolve(new Response(new ReadableStream({start(){}}))):saved(url,options);
-    t.mock.method(AbortSignal,'timeout',milliseconds=>{budgets.push(milliseconds);return timeout(10);});
+    t.mock.method(AbortSignal,'timeout',timeout);
     await assert.rejects(real.readAsset({kind:'release',releaseId:91,assetId:asset.id,name:asset.name,maxBytes:4*1024**2}),{code:'PUBLISH_NETWORK'});
     assert.ok(budgets.includes(180000));
   });
