@@ -291,13 +291,15 @@ function createUpdatePorts({verifiedRelease},ports) {
   async function isolated(work) {
     const relative='probes/'+randomUUID(),cwd=resolveOwned(ports.root,relative);
     await fs.mkdir(path.dirname(cwd),{recursive:true});await fs.mkdir(cwd);
+    // Release Codex refuses helper aliases when CODEX_HOME is under its temp root.
+    const home=resolveOwned(cwd,'home'),temp=resolveOwned(cwd,'tmp');
     const env={
       SystemRoot:system,WINDIR:system,COMSPEC:path.join(system,'System32','cmd.exe'),
       PATH:path.join(system,'System32'),PATHEXT:'.EXE;.COM',
-      HOME:cwd,USERPROFILE:cwd,CODEX_HOME:cwd,APPDATA:cwd,LOCALAPPDATA:cwd,TEMP:cwd,TMP:cwd,
+      HOME:home,USERPROFILE:home,CODEX_HOME:home,APPDATA:home,LOCALAPPDATA:home,TEMP:temp,TMP:temp,
       CCSTATUSLINE_WIDTH:'80',NO_COLOR:'1',
     };
-    try {return await work({cwd,env});}
+    try {await fs.mkdir(home);await fs.mkdir(temp);return await work({cwd,env});}
     finally {const owned=resolveOwned(ports.root,relative);if(owned!==cwd)fail('PATH');await fs.rm(owned,{recursive:true,force:true});}
   }
   const run=(file,args,options,timeout) => execFile(file,args,{

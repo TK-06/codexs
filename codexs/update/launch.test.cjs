@@ -272,13 +272,18 @@ test('production probes isolate synthetic personal settings and verify native/fo
   const record=(await fs.readFile(path.join(f.root,'probe-record'),'utf8')).trim().split(/\r?\n/);
   const cwd=Buffer.from(record[0],'base64').toString();
   assert.ok(cwd.startsWith(path.join(f.root,'probes')+path.sep));
-  assert.equal(Buffer.from(record[1],'base64').toString(),cwd);
-  assert.equal(Buffer.from(record[2],'base64').toString(),cwd);
+  const home=Buffer.from(record[1],'base64').toString(),temp=Buffer.from(record[7],'base64').toString();
+  assert.equal(path.dirname(home),cwd,'home stays in the owned probe root');
+  assert.equal(Buffer.from(record[2],'base64').toString(),home);
+  assert.equal(path.dirname(temp),cwd,'temp stays in the owned probe root');
+  assert.notEqual(home,temp,'release CLI home must stay outside its temp subtree');
+  assert.equal(Buffer.from(record[8],'base64').toString(),temp);
   assert.equal(record[3],'False');
   const args=record[5].split('|').map(x=>Buffer.from(x,'base64').toString());
   assert.deepEqual(args,['codexs-smoke','--node',process.execPath,'--formatter',paths.formatter]);
   assert.equal(await fs.readFile(path.join(personal,'auth.json'),'utf8'),'synthetic auth sentinel');
   assert.equal(await ports.readSettingsVersion(),4);
+  await assert.rejects(fs.stat(cwd),{code:'ENOENT'},'probe cleanup removes both isolated directories');
 });
 
 test('production diagnostics reject wrong versions, unknown fields, failed cleanup and native failures',async t=>{
@@ -289,6 +294,7 @@ test('production diagnostics reject wrong versions, unknown fields, failed clean
   const paths={node:process.execPath,native:path.join(a.directory,'bin','codex.exe'),formatter:path.join(a.directory,'formatter','dist','ccstatusline.js')};
   for(const [control,method,code] of [
     ['bad-version','probeVersion','STAGE_VERSION'],
+    ['version-warning','probeVersion','STAGE_VERSION'],
     ['smoke-extra','smoke','SMOKE_PROTOCOL'],
     ['smoke-cleanup','smoke','SMOKE_PROTOCOL'],
     ['smoke-error','smoke','SMOKE_OUTPUT'],
@@ -744,7 +750,7 @@ test('aliased TEMP preserves actual probe isolation and owned fixture cleanup',{
     "assert.deepEqual(await ports.probeVersion(paths),{native:'0.166.0',formatter:'2.2.32'});await ports.smoke(paths);",
     "const row=(await fs.readFile(path.join(f.root,'probe-record'),'utf8')).trim().split(/\\r?\\n/),decode=value=>Buffer.from(value,'base64').toString('utf8'),cwd=decode(row[0]);",
     "assert.ok(cwd.startsWith(path.join(f.root,'probes')+path.sep),'actual probe cwd must stay in the fixture probe directory');",
-    "assert.equal(decode(row[1]),cwd);assert.equal(decode(row[2]),cwd);assert.equal(row[3],'False');",
+    "const home=decode(row[1]),temp=decode(row[7]);assert.equal(path.dirname(home),cwd);assert.equal(decode(row[2]),home);assert.equal(path.dirname(temp),cwd);assert.notEqual(home,temp);assert.equal(decode(row[8]),temp);assert.equal(row[3],'False');",
     "assert.equal(path.dirname(f.root),require('node:fs').realpathSync.native(require('node:os').tmpdir()));",
     "}finally{for(const cleanup of cleanups.reverse())await cleanup();}",
     "await assert.rejects(fs.stat(fixtureRoot),{code:'ENOENT'},'fixture cleanup must remove its owned directory');",
