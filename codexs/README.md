@@ -199,8 +199,34 @@ The editor requires an interactive terminal; piped stdin is rejected. Codex rend
 
 Validate from an unrelated directory too: starting directory, quoted/Unicode arguments, normal interactive input, shutdown/Ctrl+C, status updates, resize, fallback/warnings, loaded project-config rejection and exact child cleanup. Synthetic launcher tests do not replace these actual application checks.
 
-## Updates and rollback
+## Legacy source-HEAD updates and rollback
 
 The user handles Git operations. Select the desired upstream version in a separately scoped update, run hosted acceptance/build and obtain matching platform packages/evidence before rerunning this installer. Never mix a newer official package with an older fork.
 
 For manual recovery after closing codexs, review the exact destination/backup/shim paths first. Preserve a failed tree by renaming it aside, restore the recorded backup to the destination, and restore the corresponding managed shims. Do not recursively delete a computed path or a previous backup to make room without checking the resolved path and obtaining approval. Retain known-good backups until a later installation has been verified in use.
+
+## Managed signed updates (preparation)
+
+The automatic-update controller and managed installer are being accepted separately from the legacy source-HEAD installer above. Production signing, first publication, recurring detection and enrollment still require their reviewed setup. Running the legacy installer does not enroll an existing prototype into automatic updates. Updating the official Codex package also does not replace the native binary in a managed codexs release.
+
+After approved enrollment, the four managed `.cmd`/`.ps1` shims resolve one authenticated release containing the native CLI, matching helpers, formatter and updater. They preserve the caller's directory and use the stable editor settings file. Command discovery from any directory requires the approved shim directory on PATH; copying a source checkout onto PATH is unnecessary.
+
+Normal `codexs` and `codexs-statusline` launches perform local verification first, adopt an already-ready compatible release, and start an eligible update check in the background. A check uses the fixed stable release feed, verifies the signed manifest and complete evidence, enforces disk/archive limits, and probes the extracted payload before marking it ready. It never builds Rust on the client. Offline or blocked checks preserve the current usable release and back off. An existing session retains its original release; adoption occurs on a later launch.
+
+`codexs --version`, `codexs-statusline --version` and `codexs update-status` are local, read-only queries. They do not adopt a ready release. Status includes the current/previous/ready identities, schedule and bounded diagnostic information. A corrupt current payload can recover to the authenticated previous release before launch. A program that has already started and then fails is never automatically replayed. Use `codexs rollback` for explicit binary rollback after a runtime problem; it does not reverse arbitrary user-data migrations, and it does not restore or copy authentication/history files.
+
+Task 11's `codexs/update/e2e.test.cjs` exercises enrollment, staging/adoption with a live old session, corrupt downloads, prelaunch recovery, explicit runtime rollback, offline/backoff, concurrent CLI/editor launches, clock rollback, low disk, worker death and commands without development tools or a source checkout. The default local mode compiles a tiny synthetic executable. It uses ephemeral signing keys and owned temporary roots, and injects only transport/disk observations into test children; production verification remains enabled. It does not run a real local Codex binary or install globally.
+
+The read-only hosted bundle job repeats those cases using the accepted extracted native/helpers/formatter bytes and a test-signed envelope. Its mandatory recovery gate records the actual positive assertion count and refuses failed, cancelled, skipped, todo or empty results before issuing a bundle receipt. Test signatures are not production releases. Preserve the full gate output and exact source/artifact identities before requesting publication or enrollment.
+
+For local development verification on Windows PowerShell 5.1, from the controller checkout with Node 22 or newer:
+
+```powershell
+$testFiles = @('upstream', 'release', 'update') | ForEach-Object {
+    Get-ChildItem -LiteralPath (Join-Path 'codexs' $_) -Recurse -File -Filter '*.test.cjs'
+} | Sort-Object FullName | ForEach-Object { $_.FullName }
+& node codexs/release/check-tests.cjs @testFiles
+if ($LASTEXITCODE -ne 0) { throw 'Node acceptance failed' }
+```
+
+Run the three updater PowerShell suites and legacy installer suite as well. Do not change execution policy to run them. Actual interactive editor/footer, trust, lifecycle and second-release adoption observations remain separate user acceptance gates.

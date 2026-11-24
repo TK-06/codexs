@@ -1167,6 +1167,32 @@ jobs:
           $program | & node -
           if($LASTEXITCODE -ne 0){throw 'Extracted bundle acceptance failed'}
 
+      - name: Prove installed update and recovery
+        run: |
+          $ErrorActionPreference='Stop'
+          $program=@'
+          'use strict';
+          const fs=require('node:fs/promises'),path=require('node:path');
+          const root=process.env.GITHUB_WORKSPACE,work=process.env.CODEXS_BUNDLE_WORK;
+          const logs=path.join(work,'logs');let output='';
+          (async()=>{
+            process.env.CODEXS_E2E_BUNDLE_CONTEXT=JSON.stringify({draft:process.env.CODEXS_BUNDLE_DRAFT,work});
+            const {checkNodeSuites}=require(path.join(root,'codexs/release/check-tests.cjs'));
+            const result=await checkNodeSuites({files:[path.join(root,'codexs/update/e2e.test.cjs')]},{write:chunk=>{output+=chunk;}});
+            const counts=result.summary;
+            if(result.suites.length!==1 || !Number.isSafeInteger(counts.passed) || counts.passed<1 || counts.failed || counts.cancelled || counts.skipped || counts.todo)throw Error('E2E_COUNTS');
+            const file=path.join(logs,'bundle.log'),before=await fs.readFile(file,'utf8'),match=/^Bundle assertions: ([1-9][0-9]*) passed; 0 failed\r?\n$/.exec(before);
+            if(!match)throw Error('E2E_RECEIPT');
+            await fs.writeFile(path.join(logs,'e2e-results.json'),JSON.stringify(counts)+'\n');
+            await fs.writeFile(file,'Bundle assertions: '+(Number(match[1])+counts.passed)+' passed; 0 failed\n');
+            console.log('Installed update/recovery assertions: '+counts.passed+' passed; 0 failed');
+          })().catch(()=>{console.error('codexs: E2E_ACCEPTANCE');process.exitCode=1;}).finally(async()=>{
+            await fs.mkdir(logs,{recursive:true});await fs.writeFile(path.join(logs,'e2e.log'),output);
+          });
+          '@
+          $program | & node -
+          if($LASTEXITCODE -ne 0){throw 'Installed update and recovery acceptance failed'}
+
       - name: Record complete acceptance
         run: |
           $ErrorActionPreference='Stop'
