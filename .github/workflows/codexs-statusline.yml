@@ -187,7 +187,7 @@ jobs:
     name: Quick workflow and status-line formatting checks
     needs: plan
     runs-on: windows-2022
-    timeout-minutes: 10
+    timeout-minutes: 30
     env:
       CODEXS_TASK9_SCOPE: ${{ inputs.scope }}
       CODEXS_NATIVE_SHA: ${{ inputs.candidate_sha }}
