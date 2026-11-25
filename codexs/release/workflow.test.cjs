@@ -763,6 +763,56 @@ test('hosted updater checks preserve a failing Node process despite a positive s
   assert.notEqual(updaterCheck(1, 7).status, 0);
 });
 
+for(const phase of ['node','archive','coordinator','enroll'])test('updater diagnostics survive interruption while '+phase+' is still running',{timeout:30000},async()=>{
+  const {spawn}=require('node:child_process'),parent=fixtureTempRoot();
+  const directory=fs.mkdtempSync(path.join(parent,'codexs-workflow-stream-test-'));
+  const gate=path.join(directory,'release'),ready=path.join(directory,'produced'),witness=path.join(directory,'capture-scope-leaked');
+  const marker='# synthetic '+phase+' progress',log=path.join(directory,'codexs-task9-quick-100-1/updater.log');
+  const names=['release/check-tests','release/evidence','release/package','upstream/upstream','release/workflow','update/protocol','update/paths','update/bootstrap','update/launch','update/http','update/state','update/stage'];
+  let child,closed=false,exit,stdout='',stderr='';
+  try{
+    for(const name of names){const file=path.join(directory,'codexs',name+'.test.cjs');fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'// synthetic discovery fixture\n');}
+    for(const suite of ['archive','coordinator','enroll'])fs.writeFileSync(path.join(directory,'codexs/update',suite+'.Tests.ps1'),"Wait-SyntheticProgress '"+suite+"'\nWrite-Output '"+({archive:'Archive',coordinator:'Coordinator',enroll:'Enrollment'}[suite])+" assertions: 1 passed; 0 failed'\n");
+    const fixture=[
+      'function Wait-SyntheticProgress([string]$Phase) {',
+      '  Write-Output (\'# synthetic \'+$Phase+\' progress\')',
+      '  if($Phase -ceq $env:CODEXS_SYNTHETIC_PHASE){',
+      '    [IO.File]::WriteAllText($env:CODEXS_SYNTHETIC_READY,\'produced\')',
+      '    $end=[DateTime]::UtcNow.AddSeconds(20)',
+      '    while(-not [IO.File]::Exists($env:CODEXS_SYNTHETIC_GATE)){if([DateTime]::UtcNow -gt $end){throw \'SYNTHETIC_PROGRESS_DEADLINE\'};[Threading.Thread]::Sleep(10)}',
+      '  }',
+      '}',
+      'function node {',
+      '  if($env:CODEXS_TASK9_SCOPE){[IO.File]::WriteAllText($env:CODEXS_SYNTHETIC_CAPTURE_WITNESS,\'leaked\')}',
+      '  Wait-SyntheticProgress \'node\'',
+      '  Write-Output \'# tests 1\';Write-Output (\'# codexs verified suites \'+(@($args).Count-1));$global:LASTEXITCODE=0',
+      '}',
+    ].join('\n');
+    const script=path.join(directory,'step.ps1');fs.writeFileSync(script,fixture+'\n'+step('Check isolated update modules').body);
+    child=spawn(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command','& ([scriptblock]::Create([IO.File]::ReadAllText($env:CODEXS_SYNTHETIC_SCRIPT)))'],
+      {cwd:directory,windowsHide:true,env:{...process.env,CODEXS_TASK9_SCOPE:'formatter',RUNNER_TEMP:directory,GITHUB_RUN_ID:'100',GITHUB_RUN_ATTEMPT:'1',CODEXS_SYNTHETIC_PHASE:phase,CODEXS_SYNTHETIC_GATE:gate,CODEXS_SYNTHETIC_READY:ready,CODEXS_SYNTHETIC_CAPTURE_WITNESS:witness,CODEXS_SYNTHETIC_SCRIPT:script}});
+    child.stdout.on('data',chunk=>{stdout+=chunk;});child.stderr.on('data',chunk=>{stderr+=chunk;});
+    exit=new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',(code,signal)=>{closed=true;resolve({code,signal});});});
+    const started=Date.now();while(!fs.existsSync(ready)&&!closed&&Date.now()-started<10000)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(fs.existsSync(ready),true,'synthetic suite must reach its owned barrier: '+stderr);
+    let visible=false,saved=false;const deadline=Date.now()+3000;
+    do{visible=stdout.includes(marker);saved=fs.existsSync(log)&&fs.readFileSync(log,'utf8').includes(marker);if(visible&&saved)break;await new Promise(resolve=>setTimeout(resolve,20));}while(Date.now()<deadline);
+    assert.equal(closed,false,'progress must be observed before the suite exits');
+    assert.equal(visible&&saved,true,'in-flight progress must reach console and durable capture: '+JSON.stringify({phase,visible,saved}));
+    assert.equal(fs.existsSync(witness),false,'child fixtures must not inherit evidence-capture scope');
+    child.kill();const result=await exit;
+    assert.ok(result.code!==0||result.signal!==null,'interrupted suite cannot report successful completion');
+    assert.equal((fs.readFileSync(log,'utf8').match(new RegExp(marker,'g'))||[]).length,1,'in-flight progress must remain saved after process termination');
+    const completion=phase==='node'?'# codexs verified suites':({archive:'Archive',coordinator:'Coordinator',enroll:'Enrollment'}[phase])+' assertions:';
+    assert.equal(fs.readFileSync(log,'utf8').includes(completion),false,'partial output must not invent the interrupted suite completion');
+  }finally{
+    fs.writeFileSync(gate,'release');
+    if(child&&!closed){const timer=setTimeout(()=>child.kill(),5000);try{await exit;}finally{clearTimeout(timer);}}
+    if(fs.realpathSync.native(directory)!==directory||path.dirname(directory)!==parent||!path.basename(directory).startsWith('codexs-workflow-stream-test-'))throw Error('Unsafe streaming fixture cleanup');
+    fs.rmSync(directory,{recursive:true,maxRetries:10,retryDelay:100});
+  }
+});
+
 // Keep this exact public contract independent of the implementation's allowlist.
 const smokeCodes = [
   ...['ARGS', 'IO', 'ENV', 'TIMEOUT', 'OUTPUT', 'CANCELLED', 'RUNNER'].flatMap(primary =>

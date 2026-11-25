@@ -705,34 +705,39 @@ jobs:
           $required = @('codexs/upstream/upstream.test.cjs','codexs/release/workflow.test.cjs','codexs/release/check-tests.test.cjs','codexs/release/evidence.test.cjs','codexs/release/package.test.cjs','codexs/update/protocol.test.cjs','codexs/update/paths.test.cjs','codexs/update/bootstrap.test.cjs','codexs/update/launch.test.cjs','codexs/update/http.test.cjs','codexs/update/state.test.cjs','codexs/update/stage.test.cjs')
           foreach ($file in $required) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'Missing required updater test suite' } }
           $tests = @(Get-ChildItem -LiteralPath 'codexs/upstream','codexs/release','codexs/update' -Filter '*.test.cjs' -File -Recurse | Sort-Object FullName | ForEach-Object { $_.FullName })
+          $recordRoot=$null
+          if ($env:CODEXS_TASK9_SCOPE -cin @('formatter','bundle','evidence')) {
+            $recordRoot=Join-Path $env:RUNNER_TEMP "codexs-task9-quick-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+            [void][IO.Directory]::CreateDirectory($recordRoot)
+            [IO.File]::WriteAllText((Join-Path $recordRoot 'updater.log'),'', [Text.UTF8Encoding]::new($false))
+          }
+          function Write-CodexsUpdaterLine([string]$Line) {
+            Write-Host $Line
+            if ($recordRoot) { [IO.File]::AppendAllText((Join-Path $recordRoot 'updater.log'),($Line+"`n"),[Text.UTF8Encoding]::new($false)) }
+          }
+          Write-CodexsUpdaterLine ('# codexs updater phase=node start files=' + $tests.Count)
           $ErrorActionPreference = 'Continue'
           $captureScope=$env:CODEXS_TASK9_SCOPE
           try {
             # Child fixture workflows must not be able to capture into this job's evidence directory.
             Remove-Item Env:CODEXS_TASK9_SCOPE -ErrorAction SilentlyContinue
-            $nodeLines = @(& node codexs/release/check-tests.cjs @tests 2>&1 | ForEach-Object { "$_" })
+            $nodeLines = @(& node codexs/release/check-tests.cjs @tests 2>&1 | ForEach-Object { $line="$_"; Write-CodexsUpdaterLine $line; $line })
             $nodeExit = $LASTEXITCODE
           } finally { $env:CODEXS_TASK9_SCOPE=$captureScope }
           $ErrorActionPreference = 'Stop'
-          $nodeLines | ForEach-Object { Write-Host $_ }
-          $recordRoot=$null
-          if ($env:CODEXS_TASK9_SCOPE -cin @('formatter','bundle','evidence')) {
-            $recordRoot=Join-Path $env:RUNNER_TEMP "codexs-task9-quick-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-            [void][IO.Directory]::CreateDirectory($recordRoot)
-            [IO.File]::WriteAllText((Join-Path $recordRoot 'updater.log'),(($nodeLines -join "`n")+"`n"),[Text.UTF8Encoding]::new($false))
-          }
+          Write-CodexsUpdaterLine ('# codexs updater phase=node end exit=' + $nodeExit)
           $summaries = @($nodeLines | Where-Object { $_ -ceq ('# codexs verified suites ' + $tests.Count) })
           if ($null -eq $nodeExit -or $nodeExit -ne 0 -or $tests.Count -lt $required.Count -or $summaries.Count -ne 1) { throw 'Updater module suites did not prove successful executed cases in every file' }
           foreach ($suite in @('archive','coordinator','enroll')) {
             $suitePath = Join-Path (Get-Location) ('codexs/update/' + $suite + '.Tests.ps1')
             if (-not (Test-Path -LiteralPath $suitePath -PathType Leaf)) { throw 'Missing required PowerShell updater suite' }
-            $lines = @(& ([scriptblock]::Create([IO.File]::ReadAllText($suitePath))))
-            $lines | ForEach-Object { Write-Host $_ }
-            if ($recordRoot) { [IO.File]::AppendAllText((Join-Path $recordRoot 'updater.log'),(($lines -join "`n")+"`n"),[Text.UTF8Encoding]::new($false)) }
+            Write-CodexsUpdaterLine ('# codexs updater phase=' + $suite + ' start')
+            $lines = @(& ([scriptblock]::Create([IO.File]::ReadAllText($suitePath))) | ForEach-Object { $line="$_"; Write-CodexsUpdaterLine $line; $line })
             $label = @{archive='Archive';coordinator='Coordinator';enroll='Enrollment'}[$suite]
             $summaries = @($lines | Where-Object { $_ -cmatch ('^' + $label + ' assertions: [1-9][0-9]* passed; 0 failed$') })
             $allSummaries = @($lines | Where-Object { $_ -cmatch ('^' + $label + ' assertions:') })
             if ($summaries.Count -ne 1 -or $allSummaries.Count -ne 1) { throw 'PowerShell updater suite did not prove successful executed assertions' }
+            Write-CodexsUpdaterLine ('# codexs updater phase=' + $suite + ' end')
           }
           $global:LASTEXITCODE = 0
 
