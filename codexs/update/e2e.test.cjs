@@ -23,6 +23,76 @@ async function until(read, label, timeout = 120000) {
   throw Error('E2E_DEADLINE: ' + label);
 }
 
+async function awaitCommandExit(command, context, timers = { setTimeout, clearTimeout }) {
+  // This fixture includes launcher startup and post-coordination verification.
+  // Preserve the inner 70-second product limit; allow 50 seconds around it.
+  const budget = require('./launch.cjs').limits.outerLocal + 50000, started = performance.now();
+  let timer;
+  try {
+    return await Promise.race([command.exit, new Promise((_, reject) => {
+      timer = timers.setTimeout(() => {
+        const observed = command.observation?.() || {}, integer = value => Number.isSafeInteger(value) ? value : null;
+        // Fixed test labels and numeric process metadata only: no argv, paths,
+        // environment or captured stdout/stderr content enters a failure report.
+        const detail = {
+          stage: /^[a-z0-9-]{1,64}$/.test(context.stage) ? context.stage : 'unknown',
+          mode: ['cli', 'editor'].includes(context.mode) ? context.mode : 'unknown',
+          operation: ['--help', '--version', '-V', 'update-status', 'rollback', '--synthetic-invalid-option', 'editor'].includes(context.operation) ? context.operation : 'other',
+          shell: ['cmd', 'powershell'].includes(context.shell) ? context.shell : 'unknown', invocation: integer(context.invocation),
+          budget_ms: budget, elapsed_ms: Math.round(performance.now() - started),
+          pid: integer(observed.pid), exit_code: integer(observed.exit_code), stdout_bytes: integer(observed.stdout_bytes), stderr_bytes: integer(observed.stderr_bytes),
+        };
+        const error = Error('E2E_COMMAND_DEADLINE ' + JSON.stringify(detail)); error.code = 'E2E_COMMAND_DEADLINE'; reject(error);
+      }, budget);
+    })]);
+  } finally { timers.clearTimeout(timer); }
+}
+
+function commandClock() {
+  let now = 0, next = 0;
+  const pending = new Map();
+  return {
+    timers: { setTimeout(callback, delay) { const id = ++next; pending.set(id, { callback, at: now + delay }); return id; }, clearTimeout(id) { pending.delete(id); } },
+    advance(ms) { now += ms; for (const [id, timer] of pending) if (timer.at <= now) { pending.delete(id); timer.callback(); } },
+    remaining() { return pending.size; },
+  };
+}
+
+test('command watchdog allows coordinator completion after bounded launcher startup', async () => {
+  const clock = commandClock(); let finish;
+  const exit = new Promise(resolve => { finish = resolve; });
+  const result = assert.doesNotReject(awaitCommandExit({ exit }, { stage: 'adopt-b-launch', mode: 'cli', operation: '--help', shell: 'cmd', invocation: 2 }, clock.timers));
+  // The inner coordinator is allowed 70 seconds, after launcher startup.
+  clock.advance(require('./launch.cjs').limits.outerLocal + 30000);
+  finish({ code: 0, signal: null, stdout: '', stderr: '' });
+  await result;
+  assert.equal(clock.remaining(), 0);
+});
+
+test('command watchdog identifies the stalled stage with bounded process metadata', async () => {
+  const clock = commandClock(), exit = new Promise(() => {});
+  const observed = awaitCommandExit({ exit, observation: () => ({ pid: 123, exit_code: 0, stdout_bytes: 37, stderr_bytes: 11, stdout: 'synthetic-private-output', path: 'synthetic-private-path' }) },
+    { stage: 'corrupt-c-check', mode: 'cli', operation: '--help', shell: 'cmd', invocation: 3 }, clock.timers).catch(error => error);
+  clock.advance(120000);
+  const error = await observed;
+  assert.equal(error.code, 'E2E_COMMAND_DEADLINE');
+  const detail = JSON.parse(error.message.slice(error.code.length + 1));
+  assert.equal(detail.stage, 'corrupt-c-check'); assert.equal(detail.invocation, 3);
+  assert.equal(detail.mode, 'cli'); assert.equal(detail.operation, '--help'); assert.equal(detail.shell, 'cmd');
+  assert.equal(detail.pid, 123); assert.equal(detail.exit_code, 0);
+  assert.equal(detail.stdout_bytes, 37); assert.equal(detail.stderr_bytes, 11);
+  assert.ok(error.message.length <= 1024); assert.doesNotMatch(error.message, /synthetic-private/);
+  assert.equal(clock.remaining(), 0);
+});
+
+test('command watchdog preserves a completed child exit and releases its timer', async () => {
+  const clock = commandClock();
+  const result = await awaitCommandExit({ exit: Promise.resolve({ code: 17, signal: null, stdout: '', stderr: '' }) },
+    { stage: 'launch', mode: 'cli', operation: 'other', shell: 'cmd', invocation: 1 }, clock.timers);
+  assert.deepEqual(result, { code: 17, signal: null, stdout: '', stderr: '' });
+  assert.equal(clock.remaining(), 0);
+});
+
 // This preload lives only in owned test scratch. It supplies GitHub-shaped bytes to
 // the unmodified production client in separate processes; it cannot select a feed.
 function transportPreload() {
@@ -177,12 +247,12 @@ async function makeFixture(t) {
     child.stderr.on('data', chunk => { stderr += chunk; if (stderr.length > 262144) child.kill(); });
     child.stdin.on('error', () => {});
     const exit = new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr })); });
-    return { child, exit, output: () => stdout };
+    return { child, exit, output: () => stdout, observation: () => ({ pid: child.pid, exit_code: child.exitCode, stdout_bytes: Buffer.byteLength(stdout), stderr_bytes: Buffer.byteLength(stderr) }) };
   }
-  async function run(mode, args, powershell = false) {
+  let invocation = 0;
+  async function run(mode, args, powershell = false, stage = 'launch') {
     const child = start(mode, args, powershell); child.child.stdin.end();
-    const result = await Promise.race([child.exit, new Promise((_, reject) => { const timer = setTimeout(() => reject(Error('E2E_COMMAND_DEADLINE')), 70000); child.exit.finally(() => clearTimeout(timer)); })]);
-    return result;
+    return awaitCommandExit(child, { stage, mode, operation: args[0] || 'editor', shell: powershell ? 'powershell' : 'cmd', invocation: ++invocation });
   }
   async function workerAfter(before) {
     const worker = await until(async () => (await records()).slice(before).find(item => item.type === 'start' && item.role === 'worker'), 'worker start');
@@ -229,16 +299,16 @@ test('task11: corrupt downloaded C leaves current B usable and never executes C'
   const c = await f.release(3), broken = path.join(f.root, 'corrupt-C.zip');
   const bytes = await fs.readFile(c.archive); bytes[0] ^= 1; await fs.writeFile(broken, bytes);
   await f.use(c, { archive: broken }); await f.clock(); const before = (await f.records()).length;
-  assert.equal((await f.run('cli', ['--help'])).code, 0); await f.workerAfter(before);
+  assert.equal((await f.run('cli', ['--help'], false, 'corrupt-c-check')).code, 0); await f.workerAfter(before);
   assert.equal((await f.state()).current.sequence, 2); assert.equal((await f.state()).ready, null);
   assert.equal((await f.records()).some(item => item.type === 'spawn' && item.file.includes(c.ref.release_id)), false); await f.unchanged();
 });
 
 async function adoptB(f) {
   await f.clock(); const before = (await f.records()).length;
-  assert.equal((await f.run('cli', ['--help'])).code, 0); await f.workerAfter(before);
+  assert.equal((await f.run('cli', ['--help'], false, 'stage-b-launch-a')).code, 0); await f.workerAfter(before);
   assert.equal((await f.state()).ready?.sequence, 2);
-  assert.equal((await f.run('cli', ['--help'])).code, 0); assert.equal((await f.state()).current.sequence, 2);
+  assert.equal((await f.run('cli', ['--help'], false, 'adopt-b-launch')).code, 0); assert.equal((await f.state()).current.sequence, 2);
 }
 
 test('task11: prelaunch corruption recovers A while runtime failure requires explicit rollback without replay', { timeout: 300000 }, async t => {
