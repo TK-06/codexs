@@ -9,7 +9,7 @@ const path = require('node:path');
 const { spawn, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execute = promisify(execFile);
-const { runtimeInstallation, zipDirectory, physicalStateCommit, upstreamPackages } = require('../test-support/update-fixtures.cjs');
+const { runtimeInstallation, zipDirectory, physicalStateCommit, upstreamPackages, evidenceZip } = require('../test-support/update-fixtures.cjs');
 const { verifyInventory, hashFile } = require('./paths.cjs');
 const shell = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
 const psText = text => Buffer.from(text, 'utf16le').toString('base64');
@@ -91,6 +91,72 @@ test('command watchdog preserves a completed child exit and releases its timer',
     { stage: 'launch', mode: 'cli', operation: 'other', shell: 'cmd', invocation: 1 }, clock.timers);
   assert.deepEqual(result, { code: 17, signal: null, stdout: '', stderr: '' });
   assert.equal(clock.remaining(), 0);
+});
+
+async function fixtureRelease(f, sequence, { manifest = {}, payload = {}, acceptedArchive = null } = {}) {
+  const version = manifest.product_version || '1.0.0', upstream = manifest.upstream?.version || '0.166.0';
+  const value = await f.install(sequence, { manifest: { ...manifest, sequence, release_id: 'codexs-v' + version + '-codex' + upstream + '-r' + sequence }, payload });
+  // Real distributions contain uppercase license names. The signed protocol
+  // orders UTF-8 bytes, whereas the shared small-fixture builder uses collation.
+  value.release.files.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  const archive = path.join(f.root, 'release-' + sequence + '.zip');
+  if (acceptedArchive) {
+    assert.deepEqual(value.release.files, acceptedArchive.files, 'accepted ZIP payload inventory must match the signed release');
+    // Sequence and signatures are sidecars; the verified payload stays identical.
+    // Recompressing a real CLI for each fixture exceeds the small ZIP helper cap.
+    await fs.copyFile(acceptedArchive.path, archive, fs.constants.COPYFILE_EXCL);
+    assert.equal(await hashFile(archive, acceptedArchive.bytes, 'BUNDLE_HASH'), acceptedArchive.sha256);
+  } else {
+    await zipDirectory(archive, value.directory, value.release.files.map(item => item.path));
+  }
+  return { ...await f.sealArchive(value, archive), archive };
+}
+
+async function acceptedArchiveFixture(t) {
+  const f = await runtimeInstallation(t), payload = { 'notes/synthetic.txt': Buffer.from('accepted fixture payload') };
+  const seed = await f.install(1, { payload });
+  seed.release.files.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  const files = Object.fromEntries(await Promise.all(seed.release.files.map(async item => [item.path, await fs.readFile(path.join(seed.directory, item.path))])));
+  // Stored entries deliberately differ from the deflated ZIP builder. Repacking
+  // identical payloads cannot accidentally satisfy the exact-byte regression.
+  const bytes = evidenceZip(files), archive = path.join(f.root, 'accepted.zip');
+  await fs.writeFile(archive, bytes);
+  return { f, payload, bytes, acceptedArchive: { path: archive, bytes: bytes.length, sha256: require('node:crypto').createHash('sha256').update(bytes).digest('hex'), files: seed.release.files } };
+}
+
+test('fixture archive reuses accepted bytes while signing distinct A B C releases', async t => {
+  const { f, payload, bytes, acceptedArchive } = await acceptedArchiveFixture(t);
+  const refs = new Set(), signatures = new Set();
+  for (const sequence of [1, 2, 3]) {
+    const value = await fixtureRelease(f, sequence, { payload, acceptedArchive });
+    assert.ok((await fs.readFile(value.archive)).equals(bytes), 'accepted ZIP bytes must be reused without recompression');
+    assert.equal(value.release.archive.bytes, bytes.length); assert.equal(value.release.archive.sha256, acceptedArchive.sha256);
+    const manifest = await fs.readFile(path.join(value.directory, 'release.json')), signature = await fs.readFile(path.join(value.directory, 'release.sig'));
+    assert.equal(JSON.parse(manifest).sequence, sequence);
+    assert.equal(JSON.parse(manifest).release_id, 'codexs-v1.0.0-codex0.166.0-r' + sequence);
+    assert.equal(require('node:crypto').verify(null, Buffer.concat([Buffer.from('codexs-release-v1\0'), manifest]), f.publicKey, signature), true);
+    refs.add(value.ref.manifest_sha256); signatures.add(signature.toString('hex'));
+  }
+  assert.equal(refs.size, 3); assert.equal(signatures.size, 3);
+});
+
+test('fixture archive rejects accepted bytes paired with a different payload inventory', async t => {
+  const { f, payload, acceptedArchive } = await acceptedArchiveFixture(t);
+  await assert.rejects(fixtureRelease(f, 2, { payload: { ...payload, 'notes/synthetic.txt': Buffer.from('changed fixture payload') }, acceptedArchive }), { code: 'ERR_ASSERTION' });
+});
+
+test('fixture archive rejects accepted source bytes changed after verification', async t => {
+  const { f, payload, bytes, acceptedArchive } = await acceptedArchiveFixture(t);
+  const altered = Buffer.from(bytes); altered[0] ^= 1; await fs.writeFile(acceptedArchive.path, altered);
+  await assert.rejects(fixtureRelease(f, 2, { payload, acceptedArchive }), { code: 'ERR_ASSERTION' });
+});
+
+test('fixture archive still builds synthetic payloads and refuses to overwrite an existing ZIP', async t => {
+  const f = await runtimeInstallation(t), payload = { 'notes/synthetic.txt': Buffer.from('synthetic ZIP contents') };
+  const value = await fixtureRelease(f, 1, { payload });
+  const result = await ps('Add-Type -AssemblyName System.IO.Compression.FileSystem;$d=' + psData({ archive: value.archive }) + ';$zip=[IO.Compression.ZipFile]::OpenRead($d.archive);try{$reader=[IO.StreamReader]::new($zip.GetEntry("notes/synthetic.txt").Open());try{[Console]::Out.WriteLine($reader.ReadToEnd())}finally{$reader.Dispose()}}finally{$zip.Dispose()}');
+  assert.equal(result.stdout.trim(), 'synthetic ZIP contents');
+  await assert.rejects(fixtureRelease(f, 1, { payload }));
 });
 
 // This preload lives only in owned test scratch. It supplies GitHub-shaped bytes to
@@ -192,12 +258,13 @@ async function makeFixture(t) {
   for (const [file, bytes] of sentinels) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, bytes); }
   await fs.writeFile(log, ''); await fs.writeFile(preload, '(' + transportPreload.toString() + ')();');
   const context = process.env.CODEXS_E2E_BUNDLE_CONTEXT;
-  let payload, manifest = {}, packageRoot;
+  let payload, manifest = {}, packageRoot, acceptedArchive = null;
   if (context) {
     assert.equal(process.env.GITHUB_ACTIONS, 'true', 'real bundle execution is hosted only');
     const { draft, work } = JSON.parse(context);
     const base = JSON.parse(await fs.readFile(path.join(draft, 'manifest-base.json')));
     assert.equal(await hashFile(path.join(draft, 'codexs-windows-x64.zip'), base.archive.bytes, 'BUNDLE_HASH'), base.archive.sha256);
+    acceptedArchive = { ...base.archive, path: path.join(draft, 'codexs-windows-x64.zip'), files: base.files };
     const source = path.join(work, 'acceptance/installed/versions', 'codexs-v' + base.product_version + '-codex' + base.upstream.version + '-r1');
     await verifyInventory(source, base.files, { installed: true });
     payload = Object.fromEntries(await Promise.all(base.files.map(async item => [item.path, await fs.readFile(path.join(source, item.path))])));
@@ -209,16 +276,7 @@ async function makeFixture(t) {
     packageRoot = path.join(f.root, 'producer/update'); await fs.mkdir(packageRoot, { recursive: true });
     for (const name of ['bootstrap.cjs', 'protocol.cjs', 'paths.cjs', 'stage.cjs', 'state.cjs', 'http.cjs', 'launch.cjs', 'archive.ps1', 'coordinator.ps1', 'enroll.ps1']) await fs.copyFile(path.join(__dirname, name), path.join(packageRoot, name));
   }
-  async function release(sequence) {
-    const version = manifest.product_version || '1.0.0', upstream = manifest.upstream?.version || '0.166.0';
-    const value = await f.install(sequence, { manifest: { ...manifest, sequence, release_id: 'codexs-v' + version + '-codex' + upstream + '-r' + sequence }, payload });
-    // Real distributions contain uppercase license names. The signed protocol
-    // orders UTF-8 bytes, whereas the shared small-fixture builder uses collation.
-    value.release.files.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
-    const archive = path.join(f.root, 'release-' + sequence + '.zip');
-    await zipDirectory(archive, value.directory, value.release.files.map(item => item.path));
-    return { ...await f.sealArchive(value, archive), archive };
-  }
+  const release = sequence => fixtureRelease(f, sequence, { manifest, payload, acceptedArchive });
   const a = await release(1), b = await release(2);
   const options = { AllowedRoot: f.root, InstallRoot: installed, AllowedShimRoot: f.root, ShimRoot: shims, PackageRoot: packageRoot,
     Bundle: a.archive, Manifest: path.join(a.directory, 'release.json'), Signature: path.join(a.directory, 'release.sig'),
