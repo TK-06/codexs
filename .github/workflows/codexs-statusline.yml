@@ -150,9 +150,9 @@ jobs:
               }
               $scopes = @($env:REQUESTED_SCOPE)
             }
-            elseif ($env:REQUESTED_SCOPE -ceq 'feature') { $scopes = @('feature') }
+            elseif ($env:REQUESTED_SCOPE -cin @('feature','build')) { $scopes = @($env:REQUESTED_SCOPE) }
             elseif ($env:REQUESTED_SCOPE -ceq 'cleanup') { $scopes = @('full', 'config', 'build') }
-            else { throw 'Reusable validation requires feature or cleanup scope' }
+            else { throw 'Reusable validation requires feature, build or cleanup scope' }
           }
           elseif ($env:GITHUB_EVENT_NAME -eq 'push') { $scopes = @('feature') }
           elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {

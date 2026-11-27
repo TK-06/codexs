@@ -403,6 +403,53 @@ test('runtime failure never replays work and exact rollback changes only the man
   assert.deepEqual(await fs.readFile(f.config.settings_path),settings);
 });
 
+async function pollBackgroundReservation(root,deadline,{read=fs.readFile,open=fs.open,now=Date.now,pause=ms=>new Promise(resolve=>setTimeout(resolve,ms))}={}) {
+  let state,finished=false;
+  while(now()<deadline){
+    try {state=JSON.parse(await read(path.join(root,'current.json'),'utf8'));}
+    catch(error){
+      // A replacement can hide one snapshot; the existing deadline still applies.
+      // Parse failures and unrelated I/O errors must remain visible.
+      if(error.code!=='ENOENT')throw error;
+      await pause(25);continue;
+    }
+    try {
+      if(state.last_check_ms>0&&state.failures===0){
+        const lock=await open(path.join(root,'update.lock'),'r+');await lock.close();
+        finished=true;break;
+      }
+    }catch{}
+    await pause(25);
+  }
+  return {state,finished};
+}
+
+test('background reservation poll retries a transient missing primary before accepting completion',async t=>{
+  const f=await launchInstallation(t),a=await f.install();
+  await f.writeState(a.ref,{last_check_ms:123,next_check_ms:3600123,failures:0});
+  const primary=path.join(f.root,'current.json'),held=path.join(f.root,'held-state.json');
+  await fs.rename(primary,held);await fs.writeFile(path.join(f.root,'update.lock'),'');
+  const result=await pollBackgroundReservation(f.root,Date.now()+15000,{pause:async()=>{await fs.rename(held,primary);}});
+  assert.equal(result.finished,true);assert.deepEqual(result.state.current,a.ref);
+  assert.equal(result.state.last_check_ms,123);assert.equal(result.state.failures,0);
+});
+
+test('background reservation poll stops at its deadline when the primary stays missing',async t=>{
+  const f=await launchInstallation(t);let clock=0;
+  const result=await pollBackgroundReservation(f.root,100,{now:()=>clock,pause:async()=>{clock=100;}});
+  assert.equal(result.finished,false);assert.equal(result.state,undefined);
+  assert.equal(clock,100,'missing state must remain pending until the existing deadline');
+});
+
+test('background reservation poll exposes malformed state and unrelated read failures',async t=>{
+  const f=await launchInstallation(t);let clock=0;
+  const timing={now:()=>clock,pause:async()=>{clock=100;}};
+  await fs.writeFile(path.join(f.root,'current.json'),'{broken');
+  await assert.rejects(pollBackgroundReservation(f.root,100,timing),SyntaxError);
+  clock=0;
+  await assert.rejects(pollBackgroundReservation(f.root,100,{...timing,read:async()=>{throw Object.assign(Error('synthetic denied read'),{code:'EACCES'});}}),{code:'EACCES'});
+});
+
 test('concurrent launches reserve one hourly background check through the real worker',{timeout:30000},async t=>{
   const f=await probeInstallation(t);
   const launchSource=await fs.readFile(path.join(__dirname,'launch.cjs'),'utf8');
@@ -418,17 +465,7 @@ test('concurrent launches reserve one hourly background check through the real w
   while(!(await fs.access(path.join(f.root,'feed-count')).then(()=>true,()=>false))){if(Date.now()>enteredBy)throw Error('Synthetic background feed did not start');await new Promise(r=>setTimeout(r,25));}
   await fs.writeFile(path.join(f.root,'feed-release'),'release after both clients exit');
   const deadline=Date.now()+15000;
-  let state,finished=false;
-  while(Date.now()<deadline){
-    state=JSON.parse(await fs.readFile(path.join(f.root,'current.json'),'utf8'));
-    try {
-      if(state.last_check_ms>0&&state.failures===0){
-        const lock=await fs.open(path.join(f.root,'update.lock'),'r+');await lock.close();
-        finished=true;break;
-      }
-    }catch{}
-    await new Promise(r=>setTimeout(r,25));
-  }
+  const {state,finished}=await pollBackgroundReservation(f.root,deadline);
   const feedSeen=await fs.readFile(path.join(f.root,'feed-count'),'utf8').catch(()=>null);
   assert.equal(finished,true,'background worker must finish its owned transaction: '+JSON.stringify({state,feedSeen}));
   assert.equal(await fs.readFile(path.join(f.root,'feed-count'),'utf8'),'one\n');

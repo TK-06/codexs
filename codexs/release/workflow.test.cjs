@@ -566,6 +566,38 @@ test('reusable cleanup accepts the original scheduled event with immutable calle
   assert.deepEqual(JSON.parse(output.slice(7)).scope, ['full', 'config', 'build']);
 });
 
+test('pinned build refresh selects only the accepted candidate and build artifact', () => {
+  const context = caller({ scope: 'build', validation_id: 'binary-refresh' });
+  context.matrix.scope = 'build';
+  for (const event of ['workflow_dispatch', 'workflow_call']) {
+    const result = execute('Resolve execution scopes', context, { GITHUB_EVENT_NAME: event });
+    assert.equal(result.status, 0, result.stderr);
+    const outputs = Object.fromEntries(result.outputs.trim().split(/\r?\n/).map(line => {
+      const split = line.indexOf('='); return [line.slice(0, split), line.slice(split + 1)];
+    }));
+    assert.deepEqual(JSON.parse(outputs.matrix), { scope: ['build'] });
+    assert.equal(outputs.native_required, 'true'); assert.equal(nativeJobEnabled(outputs), true);
+    assert.equal(outputs.candidate_sha, 'a'.repeat(40));
+    const locator = JSON.parse(outputs.validation_summary);
+    assert.equal(locator.candidate_sha, 'a'.repeat(40)); assert.equal(locator.baseline_sha, 'c'.repeat(40));
+    assert.equal(locator.validation_id, 'binary-refresh'); assert.equal(locator.verified, false);
+    assert.deepEqual(locator.scopes, ['build']);
+    assert.deepEqual(locator.artifacts, ['codexs-statusline-build-binary-refresh-101-1']);
+    const selected = execute('Select validated scope', context, { GITHUB_EVENT_NAME: event });
+    assert.equal(selected.status, 0, selected.stderr);
+    assert.ok(selected.outputs.includes(`source_ref=${'a'.repeat(40)}`));
+    assert.ok(selected.outputs.includes('artifact_suffix=binary-refresh-101-1'));
+  }
+});
+
+test('pinned build refresh rejects incomplete moving and unsafe caller identities', () => {
+  for (const change of [{ candidate_sha: '' }, { baseline_sha: '' }, { candidate_sha: 'refs/heads/main' }, { validation_id: '' }, { validation_id: '../escape' }]) {
+    const result = execute('Resolve execution scopes', caller({ scope: 'build', validation_id: 'binary-refresh', ...change }));
+    assert.notEqual(result.status, 0, 'invalid pinned build request must not create a matrix');
+    assert.equal(result.outputs, '');
+  }
+});
+
 test('moving candidate refs are rejected even when the caller originated from push', () => {
   const result = execute('Resolve execution scopes', caller({ candidate_sha: 'refs/heads/main' }), { GITHUB_EVENT_NAME: 'push' });
   assert.notEqual(result.status, 0);
