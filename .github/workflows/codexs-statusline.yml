@@ -1183,7 +1183,7 @@ jobs:
           (async()=>{
             process.env.CODEXS_E2E_BUNDLE_CONTEXT=JSON.stringify({draft:process.env.CODEXS_BUNDLE_DRAFT,work});
             const {checkNodeSuites}=require(path.join(root,'codexs/release/check-tests.cjs'));
-            const result=await checkNodeSuites({files:[path.join(root,'codexs/update/e2e.test.cjs')]},{write:chunk=>{output+=chunk;}});
+            const result=await checkNodeSuites({files:[path.join(root,'codexs/update/e2e.test.cjs')]},{write:chunk=>{output+=chunk;process.stdout.write(chunk);}});
             const counts=result.summary;
             if(result.suites.length!==1 || !Number.isSafeInteger(counts.passed) || counts.passed<1 || counts.failed || counts.cancelled || counts.skipped || counts.todo)throw Error('E2E_COUNTS');
             const file=path.join(logs,'bundle.log'),before=await fs.readFile(file,'utf8'),match=/^Bundle assertions: ([1-9][0-9]*) passed; 0 failed\r?\n$/.exec(before);
